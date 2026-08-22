@@ -1,0 +1,19 @@
+# .NET build outputs
+[Bb]in/
+[Oo]bj/
+
+# IDE and user-specific files
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Test output
+TestResults/
+*.trx
+
+# NuGet
+*.nupkg
+*.snupkg
