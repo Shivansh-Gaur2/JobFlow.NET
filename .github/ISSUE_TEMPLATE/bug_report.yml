@@ -1,0 +1,47 @@
+name: Bug report
+description: Report a reproducible problem in JobFlow.NET.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Do not include secrets, connection strings, or security vulnerabilities. See SECURITY.md for private vulnerability reporting.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and why it is a problem.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Provide the smallest steps, code, or repository that reproduces the issue.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: JobFlow.NET version or commit
+      placeholder: main at abc1234
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include .NET SDK/runtime, OS, SQL Server version, and relevant configuration with secrets removed.
+    validations:
+      required: true
