@@ -18,7 +18,7 @@ public class SqlJobStore : IJobStore
 
         var id = Guid.NewGuid();
 
-        const string sql = "INSERT INTO Jobs (Id, JobType, Payload, Status, NextRunAt, CreatedAt, RetryCount, MaxRetries) VALUES (@id, @jobType, @payload, @status, @nextRunAt, @creadtedAt, 0, 3)";
+        const string sql = "INSERT INTO Jobs (Id, JobType, Payload, Status, NextRunAt, CreatedAt, RetryCount, MaxRetries) VALUES (@id, @jobType, @payload, @status, @nextRunAt, @createdAt, 0, 3)";
 
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@id", id);
@@ -55,7 +55,7 @@ public class SqlJobStore : IJobStore
 
         await using var reader = await command.ExecuteReaderAsync(ct);
 
-        if(!await reader.ReadAsync(ct)) return null;
+        if(!await reader.ReadAsync(ct)){ return null; }
 
         return new JobRecord
         {
