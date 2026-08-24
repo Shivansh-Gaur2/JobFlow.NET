@@ -19,6 +19,17 @@ jobs:
     name: Build and test
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      JOBFLOW_TEST_CONNECTION: Server=localhost,1433;Database=JobFlowTests;User ID=sa;Password=JobFlowCi!Passw0rd2026;Encrypt=True;TrustServerCertificate=True
+
+    services:
+      sql-server:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: Y
+          MSSQL_SA_PASSWORD: JobFlowCi!Passw0rd2026
+        ports:
+          - 1433:1433
 
     steps:
       - name: Check out repository
@@ -28,6 +39,21 @@ jobs:
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 9.0.x
+
+      - name: Wait for SQL Server
+        shell: bash
+        run: |
+          for attempt in {1..30}; do
+            if docker exec "${{ job.services.sql-server.id }}" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "JobFlowCi!Passw0rd2026" -C -Q "SELECT 1" > /dev/null 2>&1; then
+              docker exec "${{ job.services.sql-server.id }}" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "JobFlowCi!Passw0rd2026" -C -Q "IF DB_ID(N'JobFlowTests') IS NULL CREATE DATABASE [JobFlowTests];"
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "SQL Server did not become ready in time."
+          exit 1
 
       - name: Restore dependencies
         run: dotnet restore JobFlow.sln
