@@ -29,7 +29,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         var jobId = await store.EnqueueAsync(
             "EmailJob",
             "{\"to\":\"customer@example.test\"}",
-            DateTimeOffset.UtcNow,
+            ReadyToRun(),
             CancellationToken.None);
 
         var claimedJob = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
@@ -47,7 +47,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task ClaimNextJobAsync_allows_only_one_worker_to_claim_a_job()
     {
         var store = CreateStore();
-        await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
 
         var firstWorker = CreateStore();
         var secondWorker = CreateStore();
@@ -63,7 +63,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task ClaimNextJobAsync_reclaims_an_expired_lease_with_a_new_token()
     {
         var store = CreateStore();
-        var jobId = await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
 
         var workerALease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
         Assert.NotNull(workerALease);
@@ -90,7 +90,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         var store = serviceProvider.GetRequiredService<IJobStore>();
         var claimStartedAt = DateTimeOffset.UtcNow;
 
-        await store.EnqueueAsync("EmailJob", null, claimStartedAt, CancellationToken.None);
+        await store.EnqueueAsync("EmailJob", null, claimStartedAt.AddMinutes(-1), CancellationToken.None);
         var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
 
         Assert.NotNull(lease);
@@ -101,7 +101,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task RenewLeaseAsync_extends_the_current_workers_lease()
     {
         var store = CreateStore();
-        await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
 
         var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
         Assert.NotNull(lease);
@@ -118,7 +118,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task RenewLeaseAsync_rejects_an_expired_lease()
     {
         var store = CreateStore();
-        var jobId = await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
         var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
 
         Assert.NotNull(lease);
@@ -134,7 +134,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task RenewLeaseAsync_keeps_a_soon_to_expire_job_owned_by_the_current_worker()
     {
         var store = CreateStore();
-        var jobId = await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
         var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
 
         Assert.NotNull(lease);
@@ -172,7 +172,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         await store.EnqueueAsync(
             typeof(BlockingJob).AssemblyQualifiedName!,
             null,
-            DateTimeOffset.UtcNow,
+            ReadyToRun(),
             CancellationToken.None);
 
         await dispatcher.StartAsync(CancellationToken.None);
@@ -198,7 +198,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task MarkCompletedAsync_marks_the_claimed_job_as_completed()
     {
         var store = CreateStore();
-        var jobId = await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
         var claimedJob = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
 
         Assert.NotNull(claimedJob);
@@ -215,7 +215,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task MarkCompletedAsync_rejects_a_worker_that_lost_its_lease()
     {
         var store = CreateStore();
-        var jobId = await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
 
         var workerALease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
         Assert.NotNull(workerALease);
@@ -238,7 +238,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task MarkFailedAsync_reschedules_the_job_for_another_worker()
     {
         var store = CreateStore();
-        var jobId = await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
         var firstClaim = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
 
         Assert.NotNull(firstClaim);
@@ -246,7 +246,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         var rescheduled = await store.MarkFailedAsync(
             firstClaim,
             newRetryCount: 1,
-            nextRunAt: DateTimeOffset.UtcNow.AddSeconds(-1),
+            nextRunAt: ReadyToRun(),
             CancellationToken.None);
 
         Assert.True(rescheduled);
@@ -263,7 +263,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task MarkFailedAsync_rejects_a_worker_that_lost_its_lease()
     {
         var store = CreateStore();
-        var jobId = await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
 
         var workerALease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
         Assert.NotNull(workerALease);
@@ -276,7 +276,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         var failed = await store.MarkFailedAsync(
             workerALease,
             newRetryCount: 1,
-            nextRunAt: DateTimeOffset.UtcNow,
+            nextRunAt: ReadyToRun(),
             CancellationToken.None);
 
         Assert.False(failed);
@@ -289,7 +289,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     public async Task MarkFailedAsync_marks_a_job_as_failed_and_releases_its_lease()
     {
         var store = CreateStore();
-        var jobId = await store.EnqueueAsync("EmailJob", null, DateTimeOffset.UtcNow, CancellationToken.None);
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
         var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
 
         Assert.NotNull(lease);
@@ -311,6 +311,8 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     }
 
     private SqlJobStore CreateStore() => new(_database.ConnectionString);
+
+    private static DateTimeOffset ReadyToRun() => DateTimeOffset.UtcNow.AddMinutes(-1);
 
     private sealed class BlockingJob : IJob
     {
