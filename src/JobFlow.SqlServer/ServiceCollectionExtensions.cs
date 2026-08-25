@@ -8,13 +8,17 @@ namespace JobFlow.SqlServer;
 
 public static class ServiceCollectionExtensions
 {
-    public static IServiceCollection UseSqlServerJobStore(this IServiceCollection services, string connectionString)
+    public static IServiceCollection UseSqlServerJobStore(this IServiceCollection services, string connectionString, Action<JobLeaseOptions>? configureLeaseOptions = null)
     {
+        var leaseOptions = new JobLeaseOptions();
+        configureLeaseOptions?.Invoke(leaseOptions);
+
         EnsureSchemaCreated(connectionString);
 
-        services.AddSingleton<IJobStore>(_ => new SqlJobStore(connectionString));
+        services.AddSingleton<IJobStore>(_ => new SqlJobStore(connectionString, leaseOptions));
         services.AddSingleton<JobScheduler>();
         services.AddHostedService<JobDispatcher>();
+        services.AddSingleton(leaseOptions);
 
         return services;
     }
