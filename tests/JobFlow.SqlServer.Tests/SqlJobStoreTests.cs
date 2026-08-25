@@ -212,6 +212,23 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MarkCompletedAsync_releases_the_completed_jobs_lease()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+        var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(lease);
+
+        var completed = await store.MarkCompletedAsync(lease, CancellationToken.None);
+        var ownership = await _database.GetOwnershipAsync(jobId);
+
+        Assert.True(completed);
+        Assert.Null(ownership.LockedBy);
+        Assert.Null(ownership.LeaseToken);
+    }
+
+    [Fact]
     public async Task MarkCompletedAsync_rejects_a_worker_that_lost_its_lease()
     {
         var store = CreateStore();
@@ -260,6 +277,29 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MarkFailedAsync_releases_the_lease_before_the_retry_is_due()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+        var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(lease);
+
+        var failed = await store.MarkFailedAsync(
+            lease,
+            newRetryCount: 1,
+            nextRunAt: DateTimeOffset.UtcNow.AddMinutes(5),
+            CancellationToken.None);
+        var status = await _database.GetStatusAsync(jobId);
+        var ownership = await _database.GetOwnershipAsync(jobId);
+
+        Assert.True(failed);
+        Assert.Equal(JobStatus.Pending, status);
+        Assert.Null(ownership.LockedBy);
+        Assert.Null(ownership.LeaseToken);
+    }
+
+    [Fact]
     public async Task MarkFailedAsync_rejects_a_worker_that_lost_its_lease()
     {
         var store = CreateStore();
@@ -283,6 +323,26 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
 
         var status = await _database.GetStatusAsync(jobId);
         Assert.Equal(JobStatus.InProgress, status);
+    }
+
+    [Fact]
+    public async Task RenewLeaseAsync_rejects_a_worker_after_another_worker_claims_the_job()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+        var workerALease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(workerALease);
+
+        await _database.ExpireLeaseAsync(jobId);
+        var workerBLease = await store.ClaimNextJobAsync("worker-b", CancellationToken.None);
+        var staleRenewal = await store.RenewLeaseAsync(workerALease, CancellationToken.None);
+        var ownership = await _database.GetOwnershipAsync(jobId);
+
+        Assert.NotNull(workerBLease);
+        Assert.Null(staleRenewal);
+        Assert.Equal("worker-b", ownership.LockedBy);
+        Assert.Equal(workerBLease.Token, ownership.LeaseToken);
     }
 
     [Fact]
