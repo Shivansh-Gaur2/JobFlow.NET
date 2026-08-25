@@ -10,6 +10,7 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
     private const string DatabaseName = "JobFlowTests";
     private readonly MsSqlContainer _container = new MsSqlBuilder(
         "mcr.microsoft.com/mssql/server:2022-latest").Build();
+    private readonly SemaphoreSlim _testLock = new(1, 1);
 
     public string ConnectionString { get; private set; } = string.Empty;
 
@@ -41,11 +42,26 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
 
     public async Task ResetAsync()
     {
-        await using var connection = new SqlConnection(ConnectionString);
-        await connection.OpenAsync();
+        await _testLock.WaitAsync();
 
-        await using var command = new SqlCommand("DELETE FROM dbo.Jobs;", connection);
-        await command.ExecuteNonQueryAsync();
+        try
+        {
+            await using var connection = new SqlConnection(ConnectionString);
+            await connection.OpenAsync();
+
+            await using var command = new SqlCommand("DELETE FROM dbo.Jobs;", connection);
+            await command.ExecuteNonQueryAsync();
+        }
+        catch
+        {
+            _testLock.Release();
+            throw;
+        }
+    }
+
+    public void ReleaseTestLock()
+    {
+        _testLock.Release();
     }
 
     public async Task<JobStatus> GetStatusAsync(Guid jobId)

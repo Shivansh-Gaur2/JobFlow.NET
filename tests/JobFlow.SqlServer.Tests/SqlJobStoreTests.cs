@@ -16,7 +16,11 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
 
     public Task InitializeAsync() => _database.ResetAsync();
 
-    public Task DisposeAsync() => Task.CompletedTask;
+    public Task DisposeAsync()
+    {
+        _database.ReleaseTestLock();
+        return Task.CompletedTask;
+    }
 
     [Fact]
     public async Task ClaimNextJobAsync_claims_a_ready_job_for_the_worker()
