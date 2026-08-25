@@ -3,7 +3,8 @@ namespace JobFlow.Core;
 public interface IJobStore
 {
     Task<Guid> EnqueueAsync(string jobType, string? payload, DateTimeOffset nextRunAt, CancellationToken ct);
-    Task<JobRecord?> ClaimNextJobAsync(string workerId, CancellationToken ct);
-    Task MarkCompletedAsync(Guid jobId, CancellationToken ct);
-    Task MarkFailedAsync(Guid jobId, int nexRetryCount, DateTimeOffset? nextRunAt, CancellationToken ct);
+    Task<JobLease?> ClaimNextJobAsync(string workerId, CancellationToken ct);
+    Task<bool> MarkCompletedAsync(JobLease lease, CancellationToken ct);
+    Task<bool> MarkFailedAsync(JobLease lease, int newRetryCount, DateTimeOffset? nextRunAt, CancellationToken ct);
+    Task<JobLease?> RenewLeaseAsync(JobLease lease, CancellationToken ct);
 }

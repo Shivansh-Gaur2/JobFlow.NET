@@ -6,9 +6,11 @@ namespace JobFlow.SqlServer;
 public class SqlJobStore : IJobStore
 {
     private readonly string _connectionString;
-    public SqlJobStore(string connectionString)
+    private readonly JobLeaseOptions _leaseOptions;
+    public SqlJobStore(string connectionString, JobLeaseOptions? leaseOptions = null)
     {
         _connectionString = connectionString;
+        _leaseOptions = leaseOptions ?? new JobLeaseOptions();
     }
 
     public async Task<Guid> EnqueueAsync(string jobType, string? payload, DateTimeOffset nextRunAt, CancellationToken ct)
@@ -33,31 +35,40 @@ public class SqlJobStore : IJobStore
         return id;
     }
 
-    public async Task<JobRecord?> ClaimNextJobAsync(string workerId, CancellationToken ct)
+    public async Task<JobLease?> ClaimNextJobAsync(string workerId, CancellationToken ct)
     {
         await using var connection = new SqlConnection(_connectionString);
 
         await connection.OpenAsync(ct);
 
+        var leaseToken = Guid.NewGuid();
+        var leaseExpiresAt = DateTimeOffset.UtcNow.Add(_leaseOptions.LeaseDuration);
+
         const string sql = """
             UPDATE TOP (1) Jobs
-            SET Status = 1, LockedBy = @workerId, LockedAt = SYSDATETIMEOFFSET()
+            SET Status = @inProgress, LockedBy = @workerId, LockedAt = SYSDATETIMEOFFSET(), LeaseToken = @leaseToken, LeaseExpiresAt = @leaseExpiresAt
             OUTPUT INSERTED.Id, INSERTED.JobType, INSERTED.Payload, INSERTED.Status,
                    INSERTED.NextRunAt, INSERTED.CreatedAt, INSERTED.RetryCount,
-                   INSERTED.MaxRetries, INSERTED.LockedBy, INSERTED.LockedAt
+                   INSERTED.MaxRetries, INSERTED.LockedBy, INSERTED.LockedAt,
+                   INSERTED.LeaseToken, INSERTED.LeaseExpiresAt
             FROM Jobs WITH (UPDLOCK, READPAST)
-            WHERE Status = 0 AND NextRunAt <= SYSDATETIMEOFFSET()
+            WHERE (Status = @pending AND NextRunAt <= SYSDATETIMEOFFSET())
+                OR (Status = @inProgress AND LeaseExpiresAt <= SYSDATETIMEOFFSET())
             """;
 
         await using var command = new SqlCommand(sql, connection);
 
         command.Parameters.AddWithValue("@workerId", workerId);
+        command.Parameters.AddWithValue("@pending", (byte)JobStatus.Pending);
+        command.Parameters.AddWithValue("@inProgress", (byte)JobStatus.InProgress);
+        command.Parameters.AddWithValue("@leaseToken", leaseToken);
+        command.Parameters.AddWithValue("@leaseExpiresAt", leaseExpiresAt);
 
         await using var reader = await command.ExecuteReaderAsync(ct);
 
         if(!await reader.ReadAsync(ct)){ return null; }
 
-        return new JobRecord
+        var job = new JobRecord
         {
             Id = reader.GetGuid(0),
             JobType = reader.GetString(1),
@@ -70,36 +81,41 @@ public class SqlJobStore : IJobStore
             LockedBy = reader.IsDBNull(8) ? null : reader.GetString(8),
             LockedAt = reader.IsDBNull(9) ? null : reader.GetDateTimeOffset(9)
         };
+        return new JobLease(job, reader.GetGuid(10), reader.GetDateTimeOffset(11));
     }
 
-    public async Task MarkCompletedAsync(Guid jobId, CancellationToken ct)
+    public async Task<bool> MarkCompletedAsync(JobLease lease, CancellationToken ct)
     {
         await using var connection = new SqlConnection(_connectionString);
 
         await connection.OpenAsync(ct);
 
-        const string sql = "UPDATE Jobs SET Status = @status WHERE Id = @id";
+        const string sql = "UPDATE Jobs SET Status = @completed, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL WHERE Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()";
 
         await using var command = new SqlCommand(sql, connection);
-        command.Parameters.AddWithValue("@status", (byte)JobStatus.Completed);
-        command.Parameters.AddWithValue("@id", jobId);
+        command.Parameters.AddWithValue("@completed", (byte)JobStatus.Completed);
+        command.Parameters.AddWithValue("@inProgress", (byte)JobStatus.InProgress);
+        command.Parameters.AddWithValue("@jobId", lease.Job.Id);
+        command.Parameters.AddWithValue("@leaseToken", lease.Token);
 
-        await command.ExecuteNonQueryAsync(ct);
+        return await command.ExecuteNonQueryAsync(ct) == 1;
     }
 
-    public async Task MarkFailedAsync(Guid jobId, int newRetryCount, DateTimeOffset? nextRunAt, CancellationToken ct)
+    public async Task<bool> MarkFailedAsync(JobLease lease, int newRetryCount, DateTimeOffset? nextRunAt, CancellationToken ct)
     {
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
         string sql = nextRunAt.HasValue
-        ? "UPDATE Jobs SET Status = @pending, RetryCount = @retryCount, NextRunAt = @nextRunAt, LockedBy = NULL, LockedAt = NULL where Id = @id"
-        : "UPDATE Jobs Set Status = @failed, RetryCount = @retryCount WHERE Id = @id";
+        ? "UPDATE Jobs SET Status = @pending, RetryCount = @retryCount, NextRunAt = @nextRunAt, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL where Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()"
+        : "UPDATE Jobs Set Status = @failed, RetryCount = @retryCount, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL where Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()";
 
         await using var command = new SqlCommand(sql, connection);
 
         command.Parameters.AddWithValue("@retryCount", newRetryCount);
-        command.Parameters.AddWithValue("@id", jobId);
+        command.Parameters.AddWithValue("@jobId", lease.Job.Id);
+        command.Parameters.AddWithValue("@leaseToken", lease.Token);
+        command.Parameters.AddWithValue("@inProgress", (byte)JobStatus.InProgress);
 
         if (nextRunAt.HasValue)
         {
@@ -111,6 +127,38 @@ public class SqlJobStore : IJobStore
             command.Parameters.AddWithValue("@failed", (byte)JobStatus.Failed);
         }
 
-        await command.ExecuteNonQueryAsync(ct);
+        return await command.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task<JobLease?> RenewLeaseAsync(JobLease lease, CancellationToken ct)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        var renewedExpiresAt = DateTimeOffset.UtcNow.Add(_leaseOptions.LeaseDuration);
+
+        const string sql = """
+        UPDATE Jobs
+        SET LeaseExpiresAt = @renewedExpiresAt
+        OUTPUT INSERTED.LeaseExpiresAt
+        WHERE Id = @jobId
+        AND Status = @inProgress
+        AND LeaseToken = @leaseToken
+        AND LeaseExpiresAt > SYSDATETIMEOFFSET()
+        """;
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@renewedExpiresAt", renewedExpiresAt);
+        command.Parameters.AddWithValue("@jobId", lease.Job.Id);
+        command.Parameters.AddWithValue("@inProgress", (byte)JobStatus.InProgress);
+        command.Parameters.AddWithValue("@leaseToken", lease.Token);
+
+        var result = await command.ExecuteScalarAsync(ct);
+        if(result is null)
+        {
+            return null;
+        }
+
+        return new JobLease(lease.Job, lease.Token, (DateTimeOffset)result);
     }
 }
