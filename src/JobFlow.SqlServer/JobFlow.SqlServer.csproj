@@ -10,13 +10,19 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
-    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.11" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" Link="README.md" />
   </ItemGroup>
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <PackageId>JobFlow.SqlServer</PackageId>
+    <Title>JobFlow.NET SQL Server</Title>
+    <Description>SQL Server storage provider for JobFlow.NET background jobs.</Description>
+    <PackageTags>jobs scheduler background-jobs sql-server hosted-service dotnet</PackageTags>
   </PropertyGroup>
 
 </Project>

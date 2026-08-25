@@ -37,3 +37,6 @@ jobs:
 
       - name: Test
         run: dotnet test JobFlow.sln --configuration Release --no-build --verbosity normal
+
+      - name: Pack
+        run: dotnet pack JobFlow.sln --configuration Release --no-build --output ./artifacts/packages
