@@ -66,6 +66,16 @@ public sealed class PrintJob : IJob
 
 The included SQL Server registration creates or upgrades the `dbo.Jobs` schema when the application starts.
 
+## Guides
+
+For the details behind the quick start, read the [documentation index](https://github.com/Shivansh-Gaur2/JobFlow.NET/tree/main/docs):
+
+- [Getting started](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/getting-started.md)
+- [Delivery and renewable leases](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/delivery-and-leases.md)
+- [Idempotent job handlers](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/idempotent-job-handlers.md)
+- [Configuration](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/configuration.md)
+- [Troubleshooting](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/troubleshooting.md)
+
 ## Repository layout
 
 ```text
