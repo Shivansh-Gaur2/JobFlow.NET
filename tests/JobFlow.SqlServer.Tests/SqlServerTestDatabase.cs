@@ -49,7 +49,7 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
             await using var connection = new SqlConnection(ConnectionString);
             await connection.OpenAsync();
 
-            await using var command = new SqlCommand("DELETE FROM dbo.Jobs;", connection);
+            await using var command = new SqlCommand("DELETE FROM dbo.JobAttempts; DELETE FROM dbo.Jobs;", connection);
             await command.ExecuteNonQueryAsync();
         }
         catch
@@ -129,5 +129,44 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
         return (
             reader.IsDBNull(0) ? null : reader.GetString(0),
             reader.IsDBNull(1) ? null : reader.GetGuid(1));
+    }
+
+    public async Task<int> GetAttemptCountAsync(Guid jobId, string workerId)
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        const string sql = "SELECT COUNT(*) FROM dbo.JobAttempts WHERE JobId = @jobId AND WorkerId = @workerId;";
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@jobId", jobId);
+        command.Parameters.AddWithValue("@workerId", workerId);
+
+        return Convert.ToInt32(await command.ExecuteScalarAsync());
+    }
+
+    public async Task<IReadOnlyList<(int AttemptNumber, string WorkerId, string Status)>> GetAttemptsAsync(Guid jobId)
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        const string sql = """
+            SELECT AttemptNumber, WorkerId, Status
+            FROM dbo.JobAttempts
+            WHERE JobId = @jobId
+            ORDER BY AttemptNumber;
+            """;
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@jobId", jobId);
+
+        await using var reader = await command.ExecuteReaderAsync();
+        var attempts = new List<(int AttemptNumber, string WorkerId, string Status)>();
+
+        while (await reader.ReadAsync())
+        {
+            attempts.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
+        }
+
+        return attempts;
     }
 }

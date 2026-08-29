@@ -40,7 +40,7 @@ public class SqlJobStore : IJobStore
         await using var connection = new SqlConnection(_connectionString);
 
         await connection.OpenAsync(ct);
-
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
         var leaseToken = Guid.NewGuid();
         var leaseExpiresAt = DateTimeOffset.UtcNow.Add(_leaseOptions.LeaseDuration);
 
@@ -50,13 +50,14 @@ public class SqlJobStore : IJobStore
             OUTPUT INSERTED.Id, INSERTED.JobType, INSERTED.Payload, INSERTED.Status,
                    INSERTED.NextRunAt, INSERTED.CreatedAt, INSERTED.RetryCount,
                    INSERTED.MaxRetries, INSERTED.LockedBy, INSERTED.LockedAt,
-                   INSERTED.LeaseToken, INSERTED.LeaseExpiresAt
+                   INSERTED.LeaseToken, INSERTED.LeaseExpiresAt,
+                   DELETED.Status, DELETED.LeaseToken
             FROM Jobs WITH (UPDLOCK, READPAST)
             WHERE (Status = @pending AND NextRunAt <= SYSDATETIMEOFFSET())
                 OR (Status = @inProgress AND LeaseExpiresAt <= SYSDATETIMEOFFSET())
             """;
 
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = new SqlCommand(sql, connection, transaction);
 
         command.Parameters.AddWithValue("@workerId", workerId);
         command.Parameters.AddWithValue("@pending", (byte)JobStatus.Pending);
@@ -81,7 +82,61 @@ public class SqlJobStore : IJobStore
             LockedBy = reader.IsDBNull(8) ? null : reader.GetString(8),
             LockedAt = reader.IsDBNull(9) ? null : reader.GetDateTimeOffset(9)
         };
-        return new JobLease(job, reader.GetGuid(10), reader.GetDateTimeOffset(11));
+
+        var previousStatus = (JobStatus)reader.GetByte(12);
+        var previousLeaseToken = reader.IsDBNull(13) ? (Guid?)null : reader.GetGuid(13);
+
+        await reader.DisposeAsync();
+
+        if(previousStatus == JobStatus.InProgress && previousLeaseToken is not null)
+        {
+            const string abandonAttemptSql = """
+                UPDATE dbo.JobAttempts
+                SET Status = 'Abandoned',
+                    FinishedAt = SYSDATETIMEOFFSET()
+                WHERE JobId = @jobId
+                    AND LeaseToken = @leaseToken
+                    AND Status = 'Running';
+            """;
+            await using var abandonCommand = new SqlCommand(abandonAttemptSql, connection, transaction);
+
+            abandonCommand.Parameters.AddWithValue("@jobId", job.Id);
+            abandonCommand.Parameters.AddWithValue("@leaseToken", previousLeaseToken.Value);
+
+            await abandonCommand.ExecuteNonQueryAsync(ct);
+        }
+
+        const string insertAttempSql = """
+            INSERT INTO dbo.JobAttempts
+                (Id, JobId, AttemptNumber, WorkerId, LeaseToken, Status, StartedAt)
+            VALUES
+                (@id, @jobId, @attemptNumber, @workerId, @leaseToken, @status, SYSDATETIMEOFFSET());
+        """;
+
+        const string nextAttemptNumberSql = """
+            SELECT COALESCE(MAX(AttemptNumber), 0) + 1
+            FROM dbo.JobAttempts
+            WHERE JobId = @jobId;
+        """;
+
+        await using var attemptCommand = new SqlCommand(insertAttempSql, connection, transaction);
+        await using var attemptNumberCommand = new SqlCommand(nextAttemptNumberSql, connection, transaction);
+        
+        attemptNumberCommand.Parameters.AddWithValue("@jobId", job.Id);
+        
+        var attemptNumber = Convert.ToInt32(await attemptNumberCommand.ExecuteScalarAsync(ct));
+
+        attemptCommand.Parameters.AddWithValue("@id", Guid.NewGuid());
+        attemptCommand.Parameters.AddWithValue("@jobId", job.Id);
+        attemptCommand.Parameters.AddWithValue("@attemptNumber", attemptNumber);
+        attemptCommand.Parameters.AddWithValue("@workerId", workerId);
+        attemptCommand.Parameters.AddWithValue("@leaseToken", leaseToken);
+        attemptCommand.Parameters.AddWithValue("@status", "Running");
+
+        await attemptCommand.ExecuteNonQueryAsync(ct);
+        await transaction.CommitAsync(ct);
+
+        return new JobLease(job, leaseToken, leaseExpiresAt);
     }
 
     public async Task<bool> MarkCompletedAsync(JobLease lease, CancellationToken ct)
