@@ -79,6 +79,50 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task ClaimNextJobAsync_creates_an_attempt_for_the_claiming_worker()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+
+        var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+        var attemptCount = await _database.GetAttemptCountAsync(jobId, "worker-a");
+
+        Assert.NotNull(lease);
+        Assert.Equal(1, attemptCount);
+    }
+
+    [Fact]
+    public async Task ClaimNextJobAsync_abandons_the_expired_attempt_and_creates_a_new_one()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+
+        var workerALease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+        Assert.NotNull(workerALease);
+
+        await _database.ExpireLeaseAsync(jobId);
+
+        var workerBLease = await store.ClaimNextJobAsync("worker-b", CancellationToken.None);
+        var attempts = await _database.GetAttemptsAsync(jobId);
+
+        Assert.NotNull(workerBLease);
+        Assert.Collection(
+            attempts,
+            attempt =>
+            {
+                Assert.Equal(1, attempt.AttemptNumber);
+                Assert.Equal("worker-a", attempt.WorkerId);
+                Assert.Equal("Abandoned", attempt.Status);
+            },
+            attempt =>
+            {
+                Assert.Equal(2, attempt.AttemptNumber);
+                Assert.Equal("worker-b", attempt.WorkerId);
+                Assert.Equal("Running", attempt.Status);
+            });
+    }
+
+    [Fact]
     public async Task UseSqlServerJobStore_uses_the_configured_lease_duration()
     {
         var services = new ServiceCollection();
@@ -212,6 +256,23 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task MarkCompletedAsync_completes_the_current_attempt()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+        var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(lease);
+
+        var completed = await store.MarkCompletedAsync(lease, CancellationToken.None);
+        var attempt = Assert.Single(await _database.GetAttemptsAsync(jobId));
+
+        Assert.True(completed);
+        Assert.Equal("Completed", attempt.Status);
+        Assert.NotNull(attempt.FinishedAt);
+    }
+
+    [Fact]
     public async Task MarkCompletedAsync_releases_the_completed_jobs_lease()
     {
         var store = CreateStore();
@@ -297,6 +358,27 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         Assert.Equal(JobStatus.Pending, status);
         Assert.Null(ownership.LockedBy);
         Assert.Null(ownership.LeaseToken);
+    }
+
+    [Fact]
+    public async Task MarkFailedAsync_fails_the_current_attempt_before_scheduling_a_retry()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+        var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(lease);
+
+        var failed = await store.MarkFailedAsync(
+            lease,
+            newRetryCount: 1,
+            nextRunAt: DateTimeOffset.UtcNow.AddMinutes(5),
+            CancellationToken.None);
+        var attempt = Assert.Single(await _database.GetAttemptsAsync(jobId));
+
+        Assert.True(failed);
+        Assert.Equal("Failed", attempt.Status);
+        Assert.NotNull(attempt.FinishedAt);
     }
 
     [Fact]
