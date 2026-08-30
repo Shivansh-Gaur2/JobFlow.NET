@@ -145,15 +145,47 @@ public class SqlJobStore : IJobStore
 
         await connection.OpenAsync(ct);
 
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+
         const string sql = "UPDATE Jobs SET Status = @completed, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL WHERE Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()";
 
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@completed", (byte)JobStatus.Completed);
         command.Parameters.AddWithValue("@inProgress", (byte)JobStatus.InProgress);
         command.Parameters.AddWithValue("@jobId", lease.Job.Id);
         command.Parameters.AddWithValue("@leaseToken", lease.Token);
 
-        return await command.ExecuteNonQueryAsync(ct) == 1;
+        var completed = await command.ExecuteNonQueryAsync(ct) == 1;
+
+        if (!completed)
+        {
+            return false;
+        }
+
+        const string completeAttemptSql = """
+            UPDATE dbo.JobAttempts
+            SET Status = 'Completed',
+                FinishedAt = SYSDATETIMEOFFSET()
+            WHERE JobId = @jobId
+                AND LeaseToken = @leaseToken
+                AND Status = 'Running';
+        """;
+
+        await using var attemptCommand = new SqlCommand(completeAttemptSql, connection, transaction);
+
+        attemptCommand.Parameters.AddWithValue("@jobId", lease.Job.Id);
+        attemptCommand.Parameters.AddWithValue("@leaseToken", lease.Token);
+
+        var attemptsUpdated = await attemptCommand.ExecuteNonQueryAsync(ct);
+
+        if(attemptsUpdated != 1)
+        {
+            throw new InvalidOperationException("The claimed job was completed, but its running attempt was not found");
+        }
+
+        await transaction.CommitAsync(ct);
+
+        return true;
     }
 
     public async Task<bool> MarkFailedAsync(JobLease lease, int newRetryCount, DateTimeOffset? nextRunAt, CancellationToken ct)
@@ -161,11 +193,13 @@ public class SqlJobStore : IJobStore
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(ct);
 
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
+
         string sql = nextRunAt.HasValue
         ? "UPDATE Jobs SET Status = @pending, RetryCount = @retryCount, NextRunAt = @nextRunAt, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL where Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()"
         : "UPDATE Jobs Set Status = @failed, RetryCount = @retryCount, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL where Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()";
 
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = new SqlCommand(sql, connection, transaction);
 
         command.Parameters.AddWithValue("@retryCount", newRetryCount);
         command.Parameters.AddWithValue("@jobId", lease.Job.Id);
@@ -182,7 +216,37 @@ public class SqlJobStore : IJobStore
             command.Parameters.AddWithValue("@failed", (byte)JobStatus.Failed);
         }
 
-        return await command.ExecuteNonQueryAsync(ct) == 1;
+        var failed = await command.ExecuteNonQueryAsync(ct) == 1;
+
+        if (!failed)
+        {
+            return false;
+        }
+
+        const string failAttemptSql = """
+            UPDATE dbo.JobAttempts
+            SET Status = 'Failed',
+                FinishedAt = SYSDATETIMEOFFSET()
+            WHERE JobId = @jobId
+                AND LeaseToken = @leaseToken
+                AND Status = 'Running'
+        """;
+
+        await using var attemptCommand = new SqlCommand(failAttemptSql, connection, transaction);
+
+        attemptCommand.Parameters.AddWithValue("@jobId", lease.Job.Id);
+        attemptCommand.Parameters.AddWithValue("@leaseToken", lease.Token);
+
+        var attemptsUpdated = await attemptCommand.ExecuteNonQueryAsync(ct);
+
+        if(attemptsUpdated != 1)
+        {
+            throw new InvalidOperationException("The claimed job was failed, but its running attempt was not found");
+        }
+
+        await transaction.CommitAsync(ct);
+
+        return true;
     }
 
     public async Task<JobLease?> RenewLeaseAsync(JobLease lease, CancellationToken ct)

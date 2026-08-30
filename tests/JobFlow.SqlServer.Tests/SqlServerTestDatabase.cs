@@ -144,13 +144,13 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
-    public async Task<IReadOnlyList<(int AttemptNumber, string WorkerId, string Status)>> GetAttemptsAsync(Guid jobId)
+    public async Task<IReadOnlyList<(int AttemptNumber, string WorkerId, string Status, DateTimeOffset? FinishedAt)>> GetAttemptsAsync(Guid jobId)
     {
         await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync();
 
         const string sql = """
-            SELECT AttemptNumber, WorkerId, Status
+            SELECT AttemptNumber, WorkerId, Status, FinishedAt
             FROM dbo.JobAttempts
             WHERE JobId = @jobId
             ORDER BY AttemptNumber;
@@ -160,11 +160,15 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
         command.Parameters.AddWithValue("@jobId", jobId);
 
         await using var reader = await command.ExecuteReaderAsync();
-        var attempts = new List<(int AttemptNumber, string WorkerId, string Status)>();
+        var attempts = new List<(int AttemptNumber, string WorkerId, string Status, DateTimeOffset? FinishedAt)>();
 
         while (await reader.ReadAsync())
         {
-            attempts.Add((reader.GetInt32(0), reader.GetString(1), reader.GetString(2)));
+            attempts.Add((
+                reader.GetInt32(0),
+                reader.GetString(1),
+                reader.GetString(2),
+                reader.IsDBNull(3) ? null : reader.GetDateTimeOffset(3)));
         }
 
         return attempts;

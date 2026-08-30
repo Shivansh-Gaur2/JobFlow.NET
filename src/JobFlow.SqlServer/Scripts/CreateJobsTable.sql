@@ -15,35 +15,41 @@ BEGIN
         LeaseExpiresAt DATETIMEOFFSET NULL
     );
 
-    CREATE TABLE dbo.JobAttempts
-    (
-        Id UNIQUEIDENTIFIER NOT NULL
-            CONSTRAINT PK_JobAttempts PRIMARY KEY,
-
-        JobId UNIQUEIDENTIFIER NOT NULL
-            CONSTRAINT FK_JobAttempts_Jobs
-            FOREIGN KEY REFERENCES dbo.Jobs(Id),
-
-        AttemptNumber INT NOT NULL,
-
-        WorkerId NVARCHAR(200) NOT NULL,
-        LeaseToken UNIQUEIDENTIFIER NOT NULL,
-
-        Status NVARCHAR(32) NOT NULL,
-        StartedAt DATETIMEOFFSET NOT NULL,
-        FinishedAt DATETIMEOFFSET NULL,
-
-        CONSTRAINT CK_JobAttempts_Status
-            CHECK (Status IN ('Running', 'Completed', 'Failed', 'Abandoned')),
-
-        CONSTRAINT UQ_JobAttempts_Job_AttemptNumber
-            UNIQUE (JobId, AttemptNumber)
-    );
-
-    CREATE INDEX IX_JobAttempts_JobId_StartedAt
-        ON dbo.JobAttempts (JobId, StartedAt);
 
     CREATE INDEX IX_Jobs_Status_NextRunAt ON Jobs (Status, NextRunAt);
+
+END
+
+    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'JobAttempts')
+    BEGIN
+        CREATE TABLE dbo.JobAttempts
+        (
+            Id UNIQUEIDENTIFIER NOT NULL
+                CONSTRAINT PK_JobAttempts PRIMARY KEY,
+
+            JobId UNIQUEIDENTIFIER NOT NULL
+                CONSTRAINT FK_JobAttempts_Jobs
+                FOREIGN KEY REFERENCES dbo.Jobs(Id),
+
+            AttemptNumber INT NOT NULL,
+
+            WorkerId NVARCHAR(200) NOT NULL,
+            LeaseToken UNIQUEIDENTIFIER NOT NULL,
+
+            Status NVARCHAR(32) NOT NULL,
+            StartedAt DATETIMEOFFSET NOT NULL,
+            FinishedAt DATETIMEOFFSET NULL,
+
+            CONSTRAINT CK_JobAttempts_Status
+                CHECK (Status IN ('Running', 'Completed', 'Failed', 'Abandoned')),
+
+            CONSTRAINT UQ_JobAttempts_Job_AttemptNumber
+                UNIQUE (JobId, AttemptNumber)
+        );
+
+        CREATE INDEX IX_JobAttempts_JobId_StartedAt
+            ON dbo.JobAttempts (JobId, StartedAt);
+
 END
 
 IF COL_LENGTH(N'dbo.Jobs', N'LeaseToken') IS NULL
