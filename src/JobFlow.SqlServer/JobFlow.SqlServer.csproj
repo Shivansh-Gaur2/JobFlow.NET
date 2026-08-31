@@ -5,12 +5,15 @@
   </ItemGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Scripts\CreateJobsTable.sql" />
+    <EmbeddedResource Include="Schema\Migrations\001-initialize-schema.sql" LogicalName="JobFlow.SqlServer.Schema.Migrations.001-initialize-schema.sql" />
+    <EmbeddedResource Include="Schema\Migrations\002-add-job-attempt-failure-diagnostics.sql" LogicalName="JobFlow.SqlServer.Schema.Migrations.002-add-job-attempt-failure-diagnostics.sql" />
+    <EmbeddedResource Include="Schema\Migrations\003-add-job-lease-recovery-index.sql" LogicalName="JobFlow.SqlServer.Schema.Migrations.003-add-job-lease-recovery-index.sql" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Data.SqlClient" Version="5.2.2" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.0" />
     <PackageReference Include="Microsoft.SourceLink.GitHub" Version="8.0.0" PrivateAssets="All" />
     <None Include="..\..\README.md" Pack="true" PackagePath="\" Link="README.md" />
   </ItemGroup>

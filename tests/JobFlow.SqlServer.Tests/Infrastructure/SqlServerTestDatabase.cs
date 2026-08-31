@@ -36,6 +36,8 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
 
         var services = new ServiceCollection();
         services.UseSqlServerJobStore(ConnectionString);
+        using var serviceProvider = services.BuildServiceProvider();
+        await serviceProvider.ApplyJobFlowSqlServerMigrationsAsync();
     }
 
     public Task DisposeAsync() => _container.DisposeAsync().AsTask();
@@ -144,13 +146,102 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
         return Convert.ToInt32(await command.ExecuteScalarAsync());
     }
 
-    public async Task<IReadOnlyList<(int AttemptNumber, string WorkerId, string Status, DateTimeOffset? FinishedAt)>> GetAttemptsAsync(Guid jobId)
+    public async Task<(Guid? ErrorId, string? FailureType, string? FailureMessage)> GetAttemptFailureAsync(Guid jobId)
     {
         await using var connection = new SqlConnection(ConnectionString);
         await connection.OpenAsync();
 
         const string sql = """
-            SELECT AttemptNumber, WorkerId, Status, FinishedAt
+            SELECT ErrorId, FailureType, FailureMessage
+            FROM dbo.JobAttempts
+            WHERE JobId = @jobId;
+            """;
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@jobId", jobId);
+
+        await using var reader = await command.ExecuteReaderAsync();
+        if (!await reader.ReadAsync())
+        {
+            throw new InvalidOperationException($"No attempt was found for job '{jobId}'.");
+        }
+
+        return (
+            reader.IsDBNull(0) ? null : reader.GetGuid(0),
+            reader.IsDBNull(1) ? null : reader.GetString(1),
+            reader.IsDBNull(2) ? null : reader.GetString(2));
+    }
+
+    public async Task<string> CreateDatabaseAsync(string databaseName)
+    {
+        var masterConnectionString = _container.GetConnectionString();
+        await using var connection = new SqlConnection(masterConnectionString);
+        await connection.OpenAsync();
+
+        await using var command = new SqlCommand($"CREATE DATABASE [{databaseName}];", connection);
+        await command.ExecuteNonQueryAsync();
+
+        return new SqlConnectionStringBuilder(masterConnectionString)
+        {
+            InitialCatalog = databaseName
+        }.ConnectionString;
+    }
+
+    public static async Task ApplyLegacySchemaAsync(string connectionString)
+    {
+        var assembly = typeof(SqlJobStore).Assembly;
+        const string resourceName = "JobFlow.SqlServer.Schema.Migrations.001-initialize-schema.sql";
+
+        await using var stream = assembly.GetManifestResourceStream(resourceName)
+            ?? throw new InvalidOperationException($"Could not find embedded migration '{resourceName}'.");
+        using var reader = new StreamReader(stream);
+        var script = await reader.ReadToEndAsync();
+
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+        await using var command = new SqlCommand(script, connection);
+        await command.ExecuteNonQueryAsync();
+    }
+
+    public static async Task<bool> HasColumnAsync(string connectionString, string tableName, string columnName)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        const string sql = "SELECT CASE WHEN COL_LENGTH(@tableName, @columnName) IS NULL THEN 0 ELSE 1 END;";
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@tableName", tableName);
+        command.Parameters.AddWithValue("@columnName", columnName);
+
+        return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
+    }
+
+    public static async Task<IReadOnlyList<int>> GetAppliedMigrationVersionsAsync(string connectionString)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        const string sql = "SELECT Version FROM dbo.JobFlowSchemaMigrations ORDER BY Version;";
+        await using var command = new SqlCommand(sql, connection);
+        await using var reader = await command.ExecuteReaderAsync();
+
+        var versions = new List<int>();
+        while (await reader.ReadAsync())
+        {
+            versions.Add(reader.GetInt32(0));
+        }
+
+        return versions;
+    }
+
+    public async Task<IReadOnlyList<(int AttemptNumber, string WorkerId, string Status, DateTimeOffset? FinishedAt, Guid? ErrorId, string? FailureType, string? FailureMessage)>> GetAttemptsAsync(Guid jobId)
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        const string sql = """
+            SELECT AttemptNumber, WorkerId, Status, FinishedAt,
+                   ErrorId, FailureType, FailureMessage
             FROM dbo.JobAttempts
             WHERE JobId = @jobId
             ORDER BY AttemptNumber;
@@ -160,7 +251,7 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
         command.Parameters.AddWithValue("@jobId", jobId);
 
         await using var reader = await command.ExecuteReaderAsync();
-        var attempts = new List<(int AttemptNumber, string WorkerId, string Status, DateTimeOffset? FinishedAt)>();
+        var attempts = new List<(int AttemptNumber, string WorkerId, string Status, DateTimeOffset? FinishedAt, Guid? ErrorId, string? FailureType, string? FailureMessage)>();
 
         while (await reader.ReadAsync())
         {
@@ -168,7 +259,10 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
                 reader.GetInt32(0),
                 reader.GetString(1),
                 reader.GetString(2),
-                reader.IsDBNull(3) ? null : reader.GetDateTimeOffset(3)));
+                reader.IsDBNull(3) ? null : reader.GetDateTimeOffset(3),
+                reader.IsDBNull(4) ? null : reader.GetGuid(4),
+                reader.IsDBNull(5) ? null : reader.GetString(5),
+                reader.IsDBNull(6) ? null : reader.GetString(6)));
         }
 
         return attempts;

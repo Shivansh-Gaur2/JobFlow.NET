@@ -27,6 +27,8 @@ For shorter jobs, lower values can recover a crashed worker sooner. Keep enough 
 
 For longer jobs, choose a lease duration that comfortably covers a delayed renewal. Keep the renewal interval much shorter than the lease duration.
 
+JobFlow validates this at startup: both values must be positive, and `RenewalInterval` must be shorter than `LeaseDuration`. Otherwise, a worker could miss its first renewal and let another worker recover the same job while the first worker is still busy.
+
 ## Retries
 
 The SQL store currently starts each job with `MaxRetries` set to three. When a handler throws, the dispatcher uses exponential backoff before rescheduling it. After the third recorded failure, the job is marked failed.

@@ -14,13 +14,15 @@ builder.Services.AddTransient<PrintJob>();
 
 var host = builder.Build();
 
+await host.Services.ApplyJobFlowSqlServerMigrationsAsync();
+
 using (var scope = host.Services.CreateScope())
 {
     var scheduler = scope.ServiceProvider.GetRequiredService<JobScheduler>();
 
-    for(int i = 1; i <= 10; i++)
+    for (int i = 1; i <= 10; i++)
     {
-        await scheduler.EnqueueAsync<PrintJob>(payload : $"Job Number {i}");
+        await scheduler.EnqueueAsync<PrintJob>(payload: $"Job Number {i}");
     }
 }
 

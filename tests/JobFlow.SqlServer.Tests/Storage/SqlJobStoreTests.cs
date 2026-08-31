@@ -142,6 +142,93 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public void UseSqlServerJobStore_rejects_a_renewal_interval_that_is_not_shorter_than_the_lease()
+    {
+        var services = new ServiceCollection();
+
+        var exception = Assert.Throws<ArgumentOutOfRangeException>(() =>
+            services.UseSqlServerJobStore(
+                _database.ConnectionString,
+                options =>
+                {
+                    options.LeaseDuration = TimeSpan.FromMinutes(1);
+                    options.RenewalInterval = TimeSpan.FromMinutes(1);
+                }));
+
+        Assert.Equal(nameof(JobLeaseOptions.RenewalInterval), exception.ParamName);
+    }
+
+    [Fact]
+    public void DefaultJobFailureClassifier_redacts_the_raw_exception_message()
+    {
+        var classifier = new DefaultJobFailureClassifier();
+        var failure = classifier.Classify(
+            new InvalidOperationException("Customer password is hunter2."),
+            Guid.NewGuid());
+
+        Assert.Equal("InvalidOperationException", failure.FailureType);
+        Assert.Equal("Job execution failed. See ErrorId for details.", failure.SafeMessage);
+        Assert.DoesNotContain("hunter2", failure.SafeMessage, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UseSqlServerJobStore_preserves_a_host_provided_failure_classifier()
+    {
+        var services = new ServiceCollection();
+        var classifier = new TestFailureClassifier();
+        services.AddSingleton<IJobFailureClassifier>(classifier);
+
+        services.UseSqlServerJobStore(_database.ConnectionString);
+
+        using var serviceProvider = services.BuildServiceProvider();
+
+        Assert.Same(classifier, serviceProvider.GetRequiredService<IJobFailureClassifier>());
+    }
+
+    [Fact]
+    public async Task ClaimNextJobAsync_claims_the_oldest_ready_job_first()
+    {
+        var store = CreateStore();
+        var oldestJobId = await store.EnqueueAsync(
+            "OldestJob",
+            null,
+            DateTimeOffset.UtcNow.AddMinutes(-2),
+            CancellationToken.None);
+        await store.EnqueueAsync(
+            "NewerJob",
+            null,
+            DateTimeOffset.UtcNow.AddMinutes(-1),
+            CancellationToken.None);
+
+        var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(lease);
+        Assert.Equal(oldestJobId, lease.Job.Id);
+    }
+
+    [Fact]
+    public async Task ApplyJobFlowSqlServerMigrationsAsync_upgrades_a_legacy_schema_once()
+    {
+        var databaseName = $"JobFlowMigration{Guid.NewGuid():N}";
+        var connectionString = await _database.CreateDatabaseAsync(databaseName);
+        await SqlServerTestDatabase.ApplyLegacySchemaAsync(connectionString);
+
+        Assert.False(await SqlServerTestDatabase.HasColumnAsync(connectionString, "dbo.JobAttempts", "ErrorId"));
+
+        var services = new ServiceCollection();
+        services.UseSqlServerJobStore(connectionString);
+        using var serviceProvider = services.BuildServiceProvider();
+
+        await serviceProvider.ApplyJobFlowSqlServerMigrationsAsync();
+        await serviceProvider.ApplyJobFlowSqlServerMigrationsAsync();
+
+        Assert.True(await SqlServerTestDatabase.HasColumnAsync(connectionString, "dbo.JobAttempts", "ErrorId"));
+        Assert.True(await SqlServerTestDatabase.HasColumnAsync(connectionString, "dbo.JobAttempts", "FailureType"));
+        Assert.True(await SqlServerTestDatabase.HasColumnAsync(connectionString, "dbo.JobAttempts", "FailureMessage"));
+        Assert.Equal([1, 2, 3], await SqlServerTestDatabase.GetAppliedMigrationVersionsAsync(connectionString));
+    }
+
+    [Fact]
     public async Task RenewLeaseAsync_extends_the_current_workers_lease()
     {
         var store = CreateStore();
@@ -323,6 +410,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
 
         var rescheduled = await store.MarkFailedAsync(
             firstClaim,
+            TestFailure(),
             newRetryCount: 1,
             nextRunAt: ReadyToRun(),
             CancellationToken.None);
@@ -348,6 +436,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
 
         var failed = await store.MarkFailedAsync(
             lease,
+            TestFailure(),
             newRetryCount: 1,
             nextRunAt: DateTimeOffset.UtcNow.AddMinutes(5),
             CancellationToken.None);
@@ -369,16 +458,22 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
 
         Assert.NotNull(lease);
 
+        var failure = TestFailure();
         var failed = await store.MarkFailedAsync(
             lease,
+            failure,
             newRetryCount: 1,
             nextRunAt: DateTimeOffset.UtcNow.AddMinutes(5),
             CancellationToken.None);
         var attempt = Assert.Single(await _database.GetAttemptsAsync(jobId));
+        var storedFailure = await _database.GetAttemptFailureAsync(jobId);
 
         Assert.True(failed);
         Assert.Equal("Failed", attempt.Status);
         Assert.NotNull(attempt.FinishedAt);
+        Assert.Equal(failure.ErrorId, storedFailure.ErrorId);
+        Assert.Equal(failure.FailureType, storedFailure.FailureType);
+        Assert.Equal(failure.SafeMessage, storedFailure.FailureMessage);
     }
 
     [Fact]
@@ -397,6 +492,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
 
         var failed = await store.MarkFailedAsync(
             workerALease,
+            TestFailure(),
             newRetryCount: 1,
             nextRunAt: ReadyToRun(),
             CancellationToken.None);
@@ -404,7 +500,24 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         Assert.False(failed);
 
         var status = await _database.GetStatusAsync(jobId);
+        var attempts = await _database.GetAttemptsAsync(jobId);
         Assert.Equal(JobStatus.InProgress, status);
+        Assert.Collection(
+            attempts,
+            attempt =>
+            {
+                Assert.Equal("Abandoned", attempt.Status);
+                Assert.Null(attempt.ErrorId);
+                Assert.Null(attempt.FailureType);
+                Assert.Null(attempt.FailureMessage);
+            },
+            attempt =>
+            {
+                Assert.Equal("Running", attempt.Status);
+                Assert.Null(attempt.ErrorId);
+                Assert.Null(attempt.FailureType);
+                Assert.Null(attempt.FailureMessage);
+            });
     }
 
     [Fact]
@@ -436,8 +549,10 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
 
         Assert.NotNull(lease);
 
+        var failure = TestFailure();
         var failed = await store.MarkFailedAsync(
             lease,
+            failure,
             newRetryCount: lease.Job.MaxRetries,
             nextRunAt: null,
             CancellationToken.None);
@@ -450,11 +565,21 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         Assert.Equal(JobStatus.Failed, status);
         Assert.Null(ownership.LockedBy);
         Assert.Null(ownership.LeaseToken);
+
+        var storedFailure = await _database.GetAttemptFailureAsync(jobId);
+        Assert.Equal(failure.ErrorId, storedFailure.ErrorId);
+        Assert.Equal(failure.FailureType, storedFailure.FailureType);
+        Assert.Equal(failure.SafeMessage, storedFailure.FailureMessage);
     }
 
     private SqlJobStore CreateStore() => new(_database.ConnectionString);
 
     private static DateTimeOffset ReadyToRun() => DateTimeOffset.UtcNow.AddMinutes(-1);
+
+    private static JobFailure TestFailure() => new(
+        Guid.NewGuid(),
+        "TestException",
+        "A safe test failure.");
 
     private sealed class BlockingJob : IJob
     {
@@ -477,5 +602,13 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
                 Finished.TrySetResult(true);
             }
         }
+    }
+
+    private sealed class TestFailureClassifier : IJobFailureClassifier
+    {
+        public JobFailure Classify(Exception exception, Guid errorId) => new(
+            errorId,
+            "TestFailure",
+            "A host-defined safe message.");
     }
 }

@@ -1,11 +1,11 @@
 namespace JobFlow.Core;
 
-public class JobScheduler
+public sealed class JobScheduler
 {
     private readonly IJobStore _store;
     public JobScheduler(IJobStore store)
     {
-        _store = store;
+        _store = store ?? throw new ArgumentNullException(nameof(store));
     }
 
     public Task<Guid> EnqueueAsync<TJob>(string? payload = null, CancellationToken ct = default) where TJob : IJob

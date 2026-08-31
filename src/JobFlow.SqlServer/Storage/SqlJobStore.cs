@@ -3,14 +3,17 @@ using Microsoft.Data.SqlClient;
 
 namespace JobFlow.SqlServer;
 
-public class SqlJobStore : IJobStore
+public sealed class SqlJobStore : IJobStore
 {
     private readonly string _connectionString;
     private readonly JobLeaseOptions _leaseOptions;
     public SqlJobStore(string connectionString, JobLeaseOptions? leaseOptions = null)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
         _connectionString = connectionString;
         _leaseOptions = leaseOptions ?? new JobLeaseOptions();
+        _leaseOptions.Validate();
     }
 
     public async Task<Guid> EnqueueAsync(string jobType, string? payload, DateTimeOffset nextRunAt, CancellationToken ct)
@@ -20,7 +23,7 @@ public class SqlJobStore : IJobStore
 
         var id = Guid.NewGuid();
 
-        const string sql = "INSERT INTO Jobs (Id, JobType, Payload, Status, NextRunAt, CreatedAt, RetryCount, MaxRetries) VALUES (@id, @jobType, @payload, @status, @nextRunAt, @createdAt, 0, 3)";
+        const string sql = "INSERT INTO dbo.Jobs (Id, JobType, Payload, Status, NextRunAt, CreatedAt, RetryCount, MaxRetries) VALUES (@id, @jobType, @payload, @status, @nextRunAt, @createdAt, 0, 3)";
 
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@id", id);
@@ -45,16 +48,24 @@ public class SqlJobStore : IJobStore
         var leaseExpiresAt = DateTimeOffset.UtcNow.Add(_leaseOptions.LeaseDuration);
 
         const string sql = """
-            UPDATE TOP (1) Jobs
+            ;WITH NextJob AS
+            (
+                SELECT TOP (1) *
+                FROM dbo.Jobs WITH (UPDLOCK, READPAST)
+                WHERE (Status = @pending AND NextRunAt <= SYSDATETIMEOFFSET())
+                    OR (Status = @inProgress AND LeaseExpiresAt <= SYSDATETIMEOFFSET())
+                ORDER BY
+                    CASE WHEN Status = @pending THEN NextRunAt ELSE LeaseExpiresAt END,
+                    CreatedAt,
+                    Id
+            )
+            UPDATE NextJob
             SET Status = @inProgress, LockedBy = @workerId, LockedAt = SYSDATETIMEOFFSET(), LeaseToken = @leaseToken, LeaseExpiresAt = @leaseExpiresAt
             OUTPUT INSERTED.Id, INSERTED.JobType, INSERTED.Payload, INSERTED.Status,
                    INSERTED.NextRunAt, INSERTED.CreatedAt, INSERTED.RetryCount,
                    INSERTED.MaxRetries, INSERTED.LockedBy, INSERTED.LockedAt,
                    INSERTED.LeaseToken, INSERTED.LeaseExpiresAt,
                    DELETED.Status, DELETED.LeaseToken
-            FROM Jobs WITH (UPDLOCK, READPAST)
-            WHERE (Status = @pending AND NextRunAt <= SYSDATETIMEOFFSET())
-                OR (Status = @inProgress AND LeaseExpiresAt <= SYSDATETIMEOFFSET())
             """;
 
         await using var command = new SqlCommand(sql, connection, transaction);
@@ -67,7 +78,7 @@ public class SqlJobStore : IJobStore
 
         await using var reader = await command.ExecuteReaderAsync(ct);
 
-        if(!await reader.ReadAsync(ct)){ return null; }
+        if (!await reader.ReadAsync(ct)) { return null; }
 
         var job = new JobRecord
         {
@@ -88,7 +99,7 @@ public class SqlJobStore : IJobStore
 
         await reader.DisposeAsync();
 
-        if(previousStatus == JobStatus.InProgress && previousLeaseToken is not null)
+        if (previousStatus == JobStatus.InProgress && previousLeaseToken is not null)
         {
             const string abandonAttemptSql = """
                 UPDATE dbo.JobAttempts
@@ -121,9 +132,9 @@ public class SqlJobStore : IJobStore
 
         await using var attemptCommand = new SqlCommand(insertAttempSql, connection, transaction);
         await using var attemptNumberCommand = new SqlCommand(nextAttemptNumberSql, connection, transaction);
-        
+
         attemptNumberCommand.Parameters.AddWithValue("@jobId", job.Id);
-        
+
         var attemptNumber = Convert.ToInt32(await attemptNumberCommand.ExecuteScalarAsync(ct));
 
         attemptCommand.Parameters.AddWithValue("@id", Guid.NewGuid());
@@ -147,7 +158,7 @@ public class SqlJobStore : IJobStore
 
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
 
-        const string sql = "UPDATE Jobs SET Status = @completed, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL WHERE Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()";
+        const string sql = "UPDATE dbo.Jobs SET Status = @completed, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL WHERE Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()";
 
         await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@completed", (byte)JobStatus.Completed);
@@ -178,7 +189,7 @@ public class SqlJobStore : IJobStore
 
         var attemptsUpdated = await attemptCommand.ExecuteNonQueryAsync(ct);
 
-        if(attemptsUpdated != 1)
+        if (attemptsUpdated != 1)
         {
             throw new InvalidOperationException("The claimed job was completed, but its running attempt was not found");
         }
@@ -188,7 +199,7 @@ public class SqlJobStore : IJobStore
         return true;
     }
 
-    public async Task<bool> MarkFailedAsync(JobLease lease, int newRetryCount, DateTimeOffset? nextRunAt, CancellationToken ct)
+    public async Task<bool> MarkFailedAsync(JobLease lease, JobFailure failure, int newRetryCount, DateTimeOffset? nextRunAt, CancellationToken ct)
     {
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(ct);
@@ -196,8 +207,8 @@ public class SqlJobStore : IJobStore
         await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
 
         string sql = nextRunAt.HasValue
-        ? "UPDATE Jobs SET Status = @pending, RetryCount = @retryCount, NextRunAt = @nextRunAt, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL where Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()"
-        : "UPDATE Jobs Set Status = @failed, RetryCount = @retryCount, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL where Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()";
+        ? "UPDATE dbo.Jobs SET Status = @pending, RetryCount = @retryCount, NextRunAt = @nextRunAt, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL WHERE Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()"
+        : "UPDATE dbo.Jobs SET Status = @failed, RetryCount = @retryCount, LockedBy = NULL, LockedAt = NULL, LeaseToken = NULL, LeaseExpiresAt = NULL WHERE Id = @jobId AND Status = @inProgress AND LeaseToken = @leaseToken AND LeaseExpiresAt > SYSDATETIMEOFFSET()";
 
         await using var command = new SqlCommand(sql, connection, transaction);
 
@@ -226,7 +237,10 @@ public class SqlJobStore : IJobStore
         const string failAttemptSql = """
             UPDATE dbo.JobAttempts
             SET Status = 'Failed',
-                FinishedAt = SYSDATETIMEOFFSET()
+                FinishedAt = SYSDATETIMEOFFSET(),
+                ErrorId = @errorId,
+                FailureType = @failureType,
+                FailureMessage = @failureMessage
             WHERE JobId = @jobId
                 AND LeaseToken = @leaseToken
                 AND Status = 'Running'
@@ -236,10 +250,13 @@ public class SqlJobStore : IJobStore
 
         attemptCommand.Parameters.AddWithValue("@jobId", lease.Job.Id);
         attemptCommand.Parameters.AddWithValue("@leaseToken", lease.Token);
+        attemptCommand.Parameters.AddWithValue("@errorId", failure.ErrorId);
+        attemptCommand.Parameters.AddWithValue("@failureType", failure.FailureType);
+        attemptCommand.Parameters.AddWithValue("@failureMessage", failure.SafeMessage);
 
         var attemptsUpdated = await attemptCommand.ExecuteNonQueryAsync(ct);
 
-        if(attemptsUpdated != 1)
+        if (attemptsUpdated != 1)
         {
             throw new InvalidOperationException("The claimed job was failed, but its running attempt was not found");
         }
@@ -257,7 +274,7 @@ public class SqlJobStore : IJobStore
         var renewedExpiresAt = DateTimeOffset.UtcNow.Add(_leaseOptions.LeaseDuration);
 
         const string sql = """
-        UPDATE Jobs
+        UPDATE dbo.Jobs
         SET LeaseExpiresAt = @renewedExpiresAt
         OUTPUT INSERTED.LeaseExpiresAt
         WHERE Id = @jobId
@@ -273,7 +290,7 @@ public class SqlJobStore : IJobStore
         command.Parameters.AddWithValue("@leaseToken", lease.Token);
 
         var result = await command.ExecuteScalarAsync(ct);
-        if(result is null)
+        if (result is null)
         {
             return null;
         }
