@@ -6,6 +6,7 @@ These guides explain how to use JobFlow.NET and the guarantees it makes.
 - [Delivery and renewable leases](delivery-and-leases.md) — how Worker A and Worker B safely share jobs.
 - [Idempotent job handlers](idempotent-job-handlers.md) — how to make duplicate delivery safe.
 - [Configuration](configuration.md) — lease and renewal settings.
+- [Operations and diagnostics](operations-and-diagnostics.md) — current state, attempt history, safe failure data, and migration operations.
 - [Troubleshooting](troubleshooting.md) — common local-development and SQL Server problems.
 
 JobFlow.NET is currently a preview project. Read the delivery and idempotency guides before using it for any external side effect.

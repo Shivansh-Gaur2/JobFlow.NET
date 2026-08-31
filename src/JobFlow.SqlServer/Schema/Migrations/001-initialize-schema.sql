@@ -1,6 +1,6 @@
-IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'Jobs')
+IF OBJECT_ID(N'dbo.Jobs', N'U') IS NULL
 BEGIN
-    CREATE TABLE Jobs (
+    CREATE TABLE dbo.Jobs (
         Id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY,
         JobType NVARCHAR(255) NOT NULL,
         Payload NVARCHAR(MAX) NULL,
@@ -16,11 +16,11 @@ BEGIN
     );
 
 
-    CREATE INDEX IX_Jobs_Status_NextRunAt ON Jobs (Status, NextRunAt);
+    CREATE INDEX IX_Jobs_Status_NextRunAt ON dbo.Jobs (Status, NextRunAt);
 
 END
 
-    IF NOT EXISTS (SELECT * FROM sys.tables WHERE name = 'JobAttempts')
+    IF OBJECT_ID(N'dbo.JobAttempts', N'U') IS NULL
     BEGIN
         CREATE TABLE dbo.JobAttempts
         (

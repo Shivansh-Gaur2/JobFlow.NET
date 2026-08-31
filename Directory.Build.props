@@ -10,7 +10,7 @@
     <PackageRequireLicenseAcceptance>false</PackageRequireLicenseAcceptance>
     <VersionPrefix>0.1.0</VersionPrefix>
     <VersionSuffix>preview.1</VersionSuffix>
-    <PackageReleaseNotes>Initial preview release with renewable SQL Server job leases.</PackageReleaseNotes>
+    <PackageReleaseNotes>Preview release with renewable leases, execution-attempt history, safe failure diagnostics, and explicit versioned SQL migrations.</PackageReleaseNotes>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <PublishRepositoryUrl>true</PublishRepositoryUrl>

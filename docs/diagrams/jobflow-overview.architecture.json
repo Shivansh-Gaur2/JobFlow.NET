@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "JobFlow.NET: scheduling, execution, and history",
+    "output": "jobflow-overview.html",
+    "quality_profile": "showcase",
+    "viewBox": [1180, 640]
+  },
+  "components": [
+    {
+      "id": "application",
+      "type": "external",
+      "label": "Your application",
+      "sublabel": "Schedules work",
+      "pos": [30, 240],
+      "size": [160, 70]
+    },
+    {
+      "id": "scheduler",
+      "type": "backend",
+      "label": "JobScheduler",
+      "sublabel": "Enqueues a job",
+      "pos": [250, 240],
+      "size": [170, 70]
+    },
+    {
+      "id": "dispatcher",
+      "type": "backend",
+      "label": "JobDispatcher",
+      "sublabel": "Claims and renews leases",
+      "pos": [500, 405],
+      "size": [190, 70]
+    },
+    {
+      "id": "handler",
+      "type": "backend",
+      "label": "IJob handler",
+      "sublabel": "Runs your business code",
+      "pos": [500, 540],
+      "size": [190, 70]
+    },
+    {
+      "id": "store",
+      "type": "backend",
+      "label": "SqlJobStore",
+      "sublabel": "Current-owner checks",
+      "pos": [760, 240],
+      "size": [190, 70]
+    },
+    {
+      "id": "jobs",
+      "type": "database",
+      "label": "dbo.Jobs",
+      "sublabel": "Current state and lease",
+      "pos": [990, 135],
+      "size": [155, 70]
+    },
+    {
+      "id": "attempts",
+      "type": "database",
+      "label": "dbo.JobAttempts",
+      "sublabel": "Execution history",
+      "pos": [990, 350],
+      "size": [155, 70]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Your process",
+      "wraps": ["scheduler", "dispatcher", "handler", "store"],
+      "pad": 32
+    },
+    {
+      "kind": "region",
+      "label": "SQL Server",
+      "wraps": ["jobs", "attempts"],
+      "pad": 32
+    }
+  ],
+  "connections": [
+    {
+      "id": "schedule",
+      "from": "application",
+      "to": "scheduler",
+      "label": "schedule"
+    },
+    {
+      "id": "enqueue",
+      "from": "scheduler",
+      "to": "store",
+      "label": "enqueue",
+      "variant": "emphasis"
+    },
+    {
+      "id": "claim-and-finish",
+      "from": "dispatcher",
+      "to": "store",
+      "label": "claim, renew, finish",
+      "variant": "emphasis"
+    },
+    {
+      "id": "execute",
+      "from": "dispatcher",
+      "to": "handler",
+      "label": "execute",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [595, 490]
+    },
+    {
+      "id": "job-snapshot",
+      "from": "store",
+      "to": "jobs",
+      "label": "job state and lease",
+      "variant": "emphasis",
+      "labelAt": [900, 70]
+    },
+    {
+      "id": "attempt-history",
+      "from": "store",
+      "to": "attempts",
+      "label": "one row per execution"
+    }
+  ]
+}

@@ -2,7 +2,11 @@
 
 ## The `dbo.Jobs` table is not created
 
-`UseSqlServerJobStore` runs the embedded schema script when the application starts.
+`UseSqlServerJobStore` does not create tables automatically. After building the host, apply the versioned JobFlow migrations:
+
+```csharp
+await host.Services.ApplyJobFlowSqlServerMigrationsAsync();
+```
 
 Check that:
 
@@ -10,7 +14,7 @@ Check that:
 - the SQL login can create and alter `dbo.Jobs`;
 - the application can reach SQL Server over the configured network and port.
 
-For production later, prefer a controlled database-migration process instead of granting broad schema permissions to the running application.
+For production, run this as a controlled deployment step before starting workers. Do not grant broad schema permissions to the running application unless it is also the approved migration runner.
 
 ## Integration tests cannot connect to Docker
 
@@ -36,6 +40,12 @@ If the worker crashed, wait until the lease expires. Another worker can then rec
 This can happen after a worker performs an external action but fails before recording completion. This is expected under at-least-once delivery.
 
 Use a stable business idempotency key. See [idempotent job handlers](idempotent-job-handlers.md).
+
+## A job failed but I need the real exception
+
+The database stores a safe generic failure message and an `ErrorId` on `dbo.JobAttempts`. Search your application's configured logs using that same `ErrorId`; the dispatcher writes the full exception and stack trace there.
+
+See [operations and diagnostics](operations-and-diagnostics.md) for example SQL queries and the reason JobFlow does not store full exception text in the database.
 
 ## A handler type cannot be resolved
 

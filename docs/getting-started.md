@@ -45,7 +45,15 @@ builder.Services.UseSqlServerJobStore(connectionString);
 builder.Services.AddTransient<SendWelcomeEmailJob>();
 ```
 
-`UseSqlServerJobStore` registers the scheduler and background dispatcher. It also creates or upgrades the `dbo.Jobs` table when the application starts. The SQL login therefore needs permission to create or alter that table.
+Build the host and apply migrations before starting the worker:
+
+```csharp
+var host = builder.Build();
+
+await host.Services.ApplyJobFlowSqlServerMigrationsAsync();
+```
+
+`UseSqlServerJobStore` registers the scheduler and background dispatcher. It does not change the database by itself. Apply migrations as a controlled deployment step, using a SQL login that has schema-change permission. The running worker can use a more restricted SQL login after that step.
 
 ## 4. Enqueue a job
 
