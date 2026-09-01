@@ -9,7 +9,8 @@ internal sealed class SqlServerSchemaMigrator
     [
         new(1, "Initialize schema", "JobFlow.SqlServer.Schema.Migrations.001-initialize-schema.sql"),
         new(2, "Add job attempt failure diagnostics", "JobFlow.SqlServer.Schema.Migrations.002-add-job-attempt-failure-diagnostics.sql"),
-        new(3, "Add job lease recovery index", "JobFlow.SqlServer.Schema.Migrations.003-add-job-lease-recovery-index.sql")
+        new(3, "Add job lease recovery index", "JobFlow.SqlServer.Schema.Migrations.003-add-job-lease-recovery-index.sql"),
+        new(4, "Add operations query indexes", "JobFlow.SqlServer.Schema.Migrations.004-add-operations-query-indexes.sql")
     ];
 
     private readonly string _connectionString;

@@ -19,7 +19,9 @@ public static class ServiceCollectionExtensions
 
         services.AddLogging();
         services.AddSingleton(_ => new SqlServerSchemaMigrator(connectionString));
-        services.AddSingleton<IJobStore>(_ => new SqlJobStore(connectionString, leaseOptions));
+        services.AddSingleton(_ => new SqlJobStore(connectionString, leaseOptions));
+        services.AddSingleton<IJobStore>(serviceProvider => serviceProvider.GetRequiredService<SqlJobStore>());
+        services.AddSingleton<IJobQuery>(serviceProvider => serviceProvider.GetRequiredService<SqlJobStore>());
         services.TryAddSingleton<IJobFailureClassifier, DefaultJobFailureClassifier>();
         services.AddSingleton<JobScheduler>();
         services.AddHostedService<JobDispatcher>();

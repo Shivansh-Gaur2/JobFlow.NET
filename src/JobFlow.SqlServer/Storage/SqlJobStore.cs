@@ -1,9 +1,10 @@
 using JobFlow.Core;
 using Microsoft.Data.SqlClient;
+using System.Data;
 
 namespace JobFlow.SqlServer;
 
-public sealed class SqlJobStore : IJobStore
+public sealed class SqlJobStore : IJobStore, IJobQuery
 {
     private readonly string _connectionString;
     private readonly JobLeaseOptions _leaseOptions;
@@ -14,6 +15,182 @@ public sealed class SqlJobStore : IJobStore
         _connectionString = connectionString;
         _leaseOptions = leaseOptions ?? new JobLeaseOptions();
         _leaseOptions.Validate();
+    }
+
+    public async Task<JobDetails?> GetAsync(Guid jobId, CancellationToken ct)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        const string sql = """
+            SELECT
+                j.Id,
+                j.JobType,
+                j.Status,
+                j.CreatedAt,
+                j.NextRunAt,
+                j.RetryCount,
+                j.MaxRetries,
+                j.LockedBy,
+                j.LockedAt,
+                j.LeaseExpiresAt,
+                a.Id,
+                a.AttemptNumber,
+                a.WorkerId,
+                a.Status,
+                a.StartedAt,
+                a.FinishedAt,
+                a.ErrorId,
+                a.FailureType,
+                a.FailureMessage
+            FROM dbo.Jobs AS j
+            LEFT JOIN dbo.JobAttempts AS a ON a.JobId = j.Id
+            WHERE j.Id = @jobId
+            ORDER BY a.AttemptNumber;
+            """;
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@jobId", jobId);
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+
+        var attempts = new List<JobAttemptDetails>();
+        JobDetails? details = null;
+
+        while (await reader.ReadAsync(ct))
+        {
+            details ??= new JobDetails(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                ReadJobStatus(reader.GetByte(2)),
+                reader.GetDateTimeOffset(3),
+                reader.GetDateTimeOffset(4),
+                reader.GetInt32(5),
+                reader.GetInt32(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetDateTimeOffset(8),
+                reader.IsDBNull(9) ? null : reader.GetDateTimeOffset(9),
+                attempts);
+
+            if (reader.IsDBNull(10))
+            {
+                continue;
+            }
+
+            attempts.Add(new JobAttemptDetails(
+                reader.GetGuid(10),
+                reader.GetInt32(11),
+                reader.GetString(12),
+                ReadAttemptStatus(reader.GetString(13)),
+                reader.GetDateTimeOffset(14),
+                reader.IsDBNull(15) ? null : reader.GetDateTimeOffset(15),
+                reader.IsDBNull(16) ? null : reader.GetGuid(16),
+                reader.IsDBNull(17) ? null : reader.GetString(17),
+                reader.IsDBNull(18) ? null : reader.GetString(18)));
+        }
+
+        return details is null
+            ? null
+            : details with { Attempts = attempts.AsReadOnly() };
+    }
+
+    public async Task<JobSearchPage> SearchAsync(JobSearchCriteria criteria, CancellationToken ct)
+    {
+        ValidateSearchCriteria(criteria);
+
+        var position = criteria.Cursor is null
+            ? (JobSearchPosition?)null
+            : JobSearchCursorCodec.Decode(criteria.Cursor, criteria);
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(ct);
+
+        const string sql = """
+            SELECT TOP (@take)
+                j.Id,
+                j.JobType,
+                j.Status,
+                j.CreatedAt,
+                j.NextRunAt,
+                j.RetryCount,
+                j.MaxRetries,
+                latestAttempt.WorkerId,
+                latestAttempt.StartedAt
+            FROM dbo.Jobs AS j
+            OUTER APPLY
+            (
+                SELECT TOP (1)
+                    a.WorkerId,
+                    a.StartedAt
+                FROM dbo.JobAttempts AS a
+                WHERE a.JobId = j.Id
+                ORDER BY a.AttemptNumber DESC
+            ) AS latestAttempt
+            WHERE (@status IS NULL OR j.Status = @status)
+                AND (@jobType IS NULL OR j.JobType = @jobType)
+                AND (@workerId IS NULL OR EXISTS
+                (
+                    SELECT 1
+                    FROM dbo.JobAttempts AS handledAttempt
+                    WHERE handledAttempt.JobId = j.Id
+                        AND handledAttempt.WorkerId = @workerId
+                ))
+                AND (@createdFrom IS NULL OR j.CreatedAt >= @createdFrom)
+                AND (@createdTo IS NULL OR j.CreatedAt < @createdTo)
+                AND (@cursorCreatedAt IS NULL
+                    OR j.CreatedAt < @cursorCreatedAt
+                    OR (j.CreatedAt = @cursorCreatedAt AND j.Id < @cursorId))
+            ORDER BY j.CreatedAt DESC, j.Id DESC;
+            """;
+
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.Add("@take", SqlDbType.Int).Value = criteria.PageSize + 1;
+        command.Parameters.Add("@status", SqlDbType.TinyInt).Value = criteria.Status is null
+            ? DBNull.Value
+            : (object)(byte)criteria.Status.Value;
+        command.Parameters.Add("@jobType", SqlDbType.NVarChar, 255).Value = (object?)criteria.JobType ?? DBNull.Value;
+        command.Parameters.Add("@workerId", SqlDbType.NVarChar, 200).Value = (object?)criteria.WorkerId ?? DBNull.Value;
+        command.Parameters.Add("@createdFrom", SqlDbType.DateTimeOffset).Value = criteria.CreatedFrom is null
+            ? DBNull.Value
+            : (object)criteria.CreatedFrom.Value;
+        command.Parameters.Add("@createdTo", SqlDbType.DateTimeOffset).Value = criteria.CreatedTo is null
+            ? DBNull.Value
+            : (object)criteria.CreatedTo.Value;
+        command.Parameters.Add("@cursorCreatedAt", SqlDbType.DateTimeOffset).Value = position is null
+            ? DBNull.Value
+            : (object)position.Value.CreatedAt;
+        command.Parameters.Add("@cursorId", SqlDbType.UniqueIdentifier).Value = position is null
+            ? DBNull.Value
+            : (object)position.Value.Id;
+
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var jobs = new List<JobSummary>(criteria.PageSize + 1);
+
+        while (await reader.ReadAsync(ct))
+        {
+            jobs.Add(new JobSummary(
+                reader.GetGuid(0),
+                reader.GetString(1),
+                ReadJobStatus(reader.GetByte(2)),
+                reader.GetDateTimeOffset(3),
+                reader.GetDateTimeOffset(4),
+                reader.GetInt32(5),
+                reader.GetInt32(6),
+                reader.IsDBNull(7) ? null : reader.GetString(7),
+                reader.IsDBNull(8) ? null : reader.GetDateTimeOffset(8)));
+        }
+
+        var hasMore = jobs.Count > criteria.PageSize;
+        if (hasMore)
+        {
+            jobs.RemoveAt(jobs.Count - 1);
+        }
+
+        var nextCursor = hasMore
+            ? JobSearchCursorCodec.Encode(jobs[^1].CreatedAt, jobs[^1].Id, criteria)
+            : null;
+
+        return new JobSearchPage(jobs.AsReadOnly(), nextCursor);
     }
 
     public async Task<Guid> EnqueueAsync(string jobType, string? payload, DateTimeOffset nextRunAt, CancellationToken ct)
@@ -296,5 +473,53 @@ public sealed class SqlJobStore : IJobStore
         }
 
         return new JobLease(lease.Job, lease.Token, (DateTimeOffset)result);
+    }
+
+    private static JobStatus ReadJobStatus(byte value)
+    {
+        var status = (JobStatus)value;
+
+        return Enum.IsDefined(status)
+            ? status
+            : throw new InvalidOperationException($"The database contains an unsupported job status value: {value}.");
+    }
+
+    private static JobAttemptStatus ReadAttemptStatus(string value)
+    {
+        return Enum.TryParse<JobAttemptStatus>(value, ignoreCase: false, out var status)
+            && Enum.IsDefined(status)
+            ? status
+            : throw new InvalidOperationException($"The database contains an unsupported attempt status value: {value}.");
+    }
+
+    private static void ValidateSearchCriteria(JobSearchCriteria criteria)
+    {
+        ArgumentNullException.ThrowIfNull(criteria);
+
+        if (criteria.PageSize is < 1 or > 100)
+        {
+            throw new ArgumentOutOfRangeException(
+                nameof(criteria.PageSize),
+                "Page size must be between 1 and 100.");
+        }
+
+        if (criteria.JobType is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(criteria.JobType);
+        }
+
+        if (criteria.WorkerId is not null)
+        {
+            ArgumentException.ThrowIfNullOrWhiteSpace(criteria.WorkerId);
+        }
+
+        if (criteria.CreatedFrom is not null
+            && criteria.CreatedTo is not null
+            && criteria.CreatedFrom >= criteria.CreatedTo)
+        {
+            throw new ArgumentException(
+                "CreatedFrom must be earlier than CreatedTo.",
+                nameof(criteria));
+        }
     }
 }
