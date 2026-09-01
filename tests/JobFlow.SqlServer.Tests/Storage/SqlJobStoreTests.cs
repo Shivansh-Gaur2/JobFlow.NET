@@ -44,6 +44,233 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task GetAsync_returns_current_job_state_and_running_attempt()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync(
+            "EmailJob",
+            null,
+            ReadyToRun(),
+            CancellationToken.None);
+
+        var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(lease);
+
+        var query = Assert.IsAssignableFrom<IJobQuery>(store);
+        var details = await query.GetAsync(jobId, CancellationToken.None);
+
+        Assert.NotNull(details);
+        Assert.Equal(jobId, details.Id);
+        Assert.Equal("EmailJob", details.JobType);
+        Assert.Equal(JobStatus.InProgress, details.Status);
+        Assert.Equal("worker-a", details.CurrentWorkerId);
+        Assert.NotNull(details.ClaimedAt);
+        Assert.NotNull(details.LeaseExpiresAt);
+
+        var attempt = Assert.Single(details.Attempts);
+        Assert.Equal(1, attempt.AttemptNumber);
+        Assert.Equal("worker-a", attempt.WorkerId);
+        Assert.Equal(JobAttemptStatus.Running, attempt.Status);
+        Assert.Null(attempt.FinishedAt);
+        Assert.Null(attempt.ErrorId);
+    }
+
+    [Fact]
+    public async Task GetAsync_returns_null_for_an_unknown_job()
+    {
+        var query = Assert.IsAssignableFrom<IJobQuery>(CreateStore());
+
+        var details = await query.GetAsync(Guid.NewGuid(), CancellationToken.None);
+
+        Assert.Null(details);
+    }
+
+    [Fact]
+    public async Task GetAsync_returns_attempt_history_in_order_with_safe_failure_details()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+        var firstLease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(firstLease);
+
+        var failure = TestFailure();
+        var failed = await store.MarkFailedAsync(
+            firstLease,
+            failure,
+            newRetryCount: 1,
+            nextRunAt: ReadyToRun(),
+            CancellationToken.None);
+        var secondLease = await store.ClaimNextJobAsync("worker-b", CancellationToken.None);
+
+        Assert.True(failed);
+        Assert.NotNull(secondLease);
+
+        var query = Assert.IsAssignableFrom<IJobQuery>(store);
+        var details = await query.GetAsync(jobId, CancellationToken.None);
+
+        Assert.NotNull(details);
+        Assert.Equal(JobStatus.InProgress, details.Status);
+        Assert.Equal("worker-b", details.CurrentWorkerId);
+
+        Assert.Collection(
+            details.Attempts,
+            firstAttempt =>
+            {
+                Assert.Equal(1, firstAttempt.AttemptNumber);
+                Assert.Equal("worker-a", firstAttempt.WorkerId);
+                Assert.Equal(JobAttemptStatus.Failed, firstAttempt.Status);
+                Assert.NotNull(firstAttempt.FinishedAt);
+                Assert.Equal(failure.ErrorId, firstAttempt.ErrorId);
+                Assert.Equal(failure.FailureType, firstAttempt.FailureType);
+                Assert.Equal(failure.SafeMessage, firstAttempt.FailureMessage);
+            },
+            secondAttempt =>
+            {
+                Assert.Equal(2, secondAttempt.AttemptNumber);
+                Assert.Equal("worker-b", secondAttempt.WorkerId);
+                Assert.Equal(JobAttemptStatus.Running, secondAttempt.Status);
+                Assert.Null(secondAttempt.FinishedAt);
+                Assert.Null(secondAttempt.ErrorId);
+            });
+    }
+
+    [Fact]
+    public async Task SearchAsync_filters_by_status_job_type_and_creation_window()
+    {
+        var store = CreateStore();
+        var now = DateTimeOffset.UtcNow;
+
+        var failedCleanupJobId = await store.EnqueueAsync(
+            "CleanupJob",
+            null,
+            now.AddMinutes(-1),
+            CancellationToken.None);
+        var pendingCleanupJobId = await store.EnqueueAsync(
+            "CleanupJob",
+            null,
+            now.AddHours(1),
+            CancellationToken.None);
+        var olderCleanupJobId = await store.EnqueueAsync(
+            "CleanupJob",
+            null,
+            now.AddHours(1),
+            CancellationToken.None);
+
+        var lease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+        Assert.NotNull(lease);
+        Assert.Equal(failedCleanupJobId, lease.Job.Id);
+
+        var markedFailed = await store.MarkFailedAsync(
+            lease,
+            TestFailure(),
+            newRetryCount: lease.Job.MaxRetries,
+            nextRunAt: null,
+            CancellationToken.None);
+
+        Assert.True(markedFailed);
+
+        await _database.SetCreatedAtAsync(failedCleanupJobId, now.AddMinutes(-5));
+        await _database.SetCreatedAtAsync(pendingCleanupJobId, now.AddMinutes(-5));
+        await _database.SetCreatedAtAsync(olderCleanupJobId, now.AddMinutes(-30));
+
+        var query = Assert.IsAssignableFrom<IJobQuery>(store);
+        var page = await query.SearchAsync(
+            new JobSearchCriteria(
+                Status: JobStatus.Pending,
+                JobType: "CleanupJob",
+                CreatedFrom: now.AddMinutes(-10),
+                CreatedTo: now),
+            CancellationToken.None);
+
+        var job = Assert.Single(page.Jobs);
+        Assert.Equal(pendingCleanupJobId, job.Id);
+        Assert.Equal(JobStatus.Pending, job.Status);
+        Assert.Equal("CleanupJob", job.JobType);
+        Assert.Null(page.NextCursor);
+    }
+
+    [Fact]
+    public async Task SearchAsync_matches_a_worker_who_handled_an_earlier_attempt()
+    {
+        var store = CreateStore();
+        var jobId = await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+        var firstLease = await store.ClaimNextJobAsync("worker-a", CancellationToken.None);
+
+        Assert.NotNull(firstLease);
+
+        var failed = await store.MarkFailedAsync(
+            firstLease,
+            TestFailure(),
+            newRetryCount: 1,
+            nextRunAt: ReadyToRun(),
+            CancellationToken.None);
+        var secondLease = await store.ClaimNextJobAsync("worker-b", CancellationToken.None);
+
+        Assert.True(failed);
+        Assert.NotNull(secondLease);
+
+        var query = Assert.IsAssignableFrom<IJobQuery>(store);
+        var page = await query.SearchAsync(
+            new JobSearchCriteria(WorkerId: "worker-a"),
+            CancellationToken.None);
+
+        var job = Assert.Single(page.Jobs);
+        Assert.Equal(jobId, job.Id);
+        Assert.Equal("worker-b", job.LastWorkerId);
+        Assert.NotNull(job.LastAttemptAt);
+    }
+
+    [Fact]
+    public async Task SearchAsync_uses_a_cursor_without_repeating_or_skipping_jobs()
+    {
+        var store = CreateStore();
+        var now = DateTimeOffset.UtcNow;
+        var newestJobId = await store.EnqueueAsync("NewestJob", null, now, CancellationToken.None);
+        var middleJobId = await store.EnqueueAsync("MiddleJob", null, now, CancellationToken.None);
+        var oldestJobId = await store.EnqueueAsync("OldestJob", null, now, CancellationToken.None);
+
+        await _database.SetCreatedAtAsync(newestJobId, now);
+        await _database.SetCreatedAtAsync(middleJobId, now.AddMinutes(-1));
+        await _database.SetCreatedAtAsync(oldestJobId, now.AddMinutes(-2));
+
+        var query = Assert.IsAssignableFrom<IJobQuery>(store);
+        var firstPage = await query.SearchAsync(
+            new JobSearchCriteria(PageSize: 2),
+            CancellationToken.None);
+
+        Assert.Equal([newestJobId, middleJobId], firstPage.Jobs.Select(job => job.Id));
+        Assert.NotNull(firstPage.NextCursor);
+
+        var secondPage = await query.SearchAsync(
+            new JobSearchCriteria(PageSize: 2, Cursor: firstPage.NextCursor),
+            CancellationToken.None);
+
+        Assert.Equal([oldestJobId], secondPage.Jobs.Select(job => job.Id));
+        Assert.Null(secondPage.NextCursor);
+    }
+
+    [Fact]
+    public async Task SearchAsync_rejects_a_cursor_used_with_different_filters()
+    {
+        var store = CreateStore();
+        await store.EnqueueAsync("EmailJob", null, ReadyToRun(), CancellationToken.None);
+        await store.EnqueueAsync("CleanupJob", null, ReadyToRun(), CancellationToken.None);
+
+        var query = Assert.IsAssignableFrom<IJobQuery>(store);
+        var firstPage = await query.SearchAsync(
+            new JobSearchCriteria(PageSize: 1),
+            CancellationToken.None);
+
+        Assert.NotNull(firstPage.NextCursor);
+
+        await Assert.ThrowsAsync<ArgumentException>(() => query.SearchAsync(
+            new JobSearchCriteria(PageSize: 1, JobType: "EmailJob", Cursor: firstPage.NextCursor),
+            CancellationToken.None));
+    }
+
+    [Fact]
     public async Task ClaimNextJobAsync_allows_only_one_worker_to_claim_a_job()
     {
         var store = CreateStore();
@@ -142,6 +369,20 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
     }
 
     [Fact]
+    public void UseSqlServerJobStore_registers_the_same_store_for_read_and_write_contracts()
+    {
+        var services = new ServiceCollection();
+        services.UseSqlServerJobStore(_database.ConnectionString);
+
+        using var serviceProvider = services.BuildServiceProvider();
+
+        var store = serviceProvider.GetRequiredService<IJobStore>();
+        var query = serviceProvider.GetRequiredService<IJobQuery>();
+
+        Assert.Same(store, query);
+    }
+
+    [Fact]
     public void UseSqlServerJobStore_rejects_a_renewal_interval_that_is_not_shorter_than_the_lease()
     {
         var services = new ServiceCollection();
@@ -225,7 +466,10 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         Assert.True(await SqlServerTestDatabase.HasColumnAsync(connectionString, "dbo.JobAttempts", "ErrorId"));
         Assert.True(await SqlServerTestDatabase.HasColumnAsync(connectionString, "dbo.JobAttempts", "FailureType"));
         Assert.True(await SqlServerTestDatabase.HasColumnAsync(connectionString, "dbo.JobAttempts", "FailureMessage"));
-        Assert.Equal([1, 2, 3], await SqlServerTestDatabase.GetAppliedMigrationVersionsAsync(connectionString));
+        Assert.True(await SqlServerTestDatabase.HasIndexAsync(connectionString, "dbo.Jobs", "IX_Jobs_Status_CreatedAt_Id"));
+        Assert.True(await SqlServerTestDatabase.HasIndexAsync(connectionString, "dbo.Jobs", "IX_Jobs_JobType_CreatedAt_Id"));
+        Assert.True(await SqlServerTestDatabase.HasIndexAsync(connectionString, "dbo.JobAttempts", "IX_JobAttempts_WorkerId_JobId"));
+        Assert.Equal([1, 2, 3, 4], await SqlServerTestDatabase.GetAppliedMigrationVersionsAsync(connectionString));
     }
 
     [Fact]

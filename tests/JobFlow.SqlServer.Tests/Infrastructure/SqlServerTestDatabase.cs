@@ -96,6 +96,19 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
         await command.ExecuteNonQueryAsync();
     }
 
+    public async Task SetCreatedAtAsync(Guid jobId, DateTimeOffset createdAt)
+    {
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+
+        const string sql = "UPDATE dbo.Jobs SET CreatedAt = @createdAt WHERE Id = @jobId;";
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@createdAt", createdAt);
+        command.Parameters.AddWithValue("@jobId", jobId);
+
+        await command.ExecuteNonQueryAsync();
+    }
+
     public async Task MakeLeaseExpireSoonAsync(Guid jobId)
     {
         await using var connection = new SqlConnection(ConnectionString);
@@ -212,6 +225,27 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@tableName", tableName);
         command.Parameters.AddWithValue("@columnName", columnName);
+
+        return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
+    }
+
+    public static async Task<bool> HasIndexAsync(string connectionString, string tableName, string indexName)
+    {
+        await using var connection = new SqlConnection(connectionString);
+        await connection.OpenAsync();
+
+        const string sql = """
+            SELECT CASE WHEN EXISTS
+            (
+                SELECT 1
+                FROM sys.indexes
+                WHERE object_id = OBJECT_ID(@tableName)
+                    AND name = @indexName
+            ) THEN 1 ELSE 0 END;
+            """;
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@tableName", tableName);
+        command.Parameters.AddWithValue("@indexName", indexName);
 
         return Convert.ToInt32(await command.ExecuteScalarAsync()) == 1;
     }
