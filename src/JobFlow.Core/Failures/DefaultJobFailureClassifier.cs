@@ -7,6 +7,9 @@ public sealed class DefaultJobFailureClassifier : IJobFailureClassifier
         return new JobFailure(
             errorId,
             exception.GetType().Name,
-            "Job execution failed. See ErrorId for details.");
+            "Job execution failed. See ErrorId for details.",
+            exception is InvalidDataException
+                ? JobFailureDisposition.NonRetryable
+                : JobFailureDisposition.Retryable);
     }
 }

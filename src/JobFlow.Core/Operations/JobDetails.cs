@@ -7,7 +7,7 @@ public sealed record JobDetails(
     DateTimeOffset CreatedAt,
     DateTimeOffset NextRunAt,
     int RetryCount,
-    int MaxRetries,
+    int MaxAttempts,
     string? CurrentWorkerId,
     DateTimeOffset? ClaimedAt,
     DateTimeOffset? LeaseExpiresAt,

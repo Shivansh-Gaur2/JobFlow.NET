@@ -14,7 +14,7 @@ The project explores a small, explicit job-scheduling model:
 - A job implements `IJob` and receives an optional payload plus a cancellation token.
 - SQL Server stores jobs and atomically claims ready work for competing workers.
 - A hosted dispatcher resolves a fresh job instance from dependency injection for each execution.
-- Failed jobs are retried with exponential backoff until their retry limit is reached.
+- Failed jobs use a configurable retry policy; permanent configuration failures stop immediately.
 - Each claim has a lease token. Only the worker holding the current, unexpired token can complete, fail, or renew its job.
 
 The SQL Server store uses `UPDLOCK` and `READPAST` to make claiming a job a single database operation. An expired lease can be reclaimed by another worker. This protects the queue from a crashed worker, but it also means an external side effect (for example, charging a card) must use its own idempotency key.
@@ -59,6 +59,20 @@ builder.Services.UseSqlServerJobStore(
     "Server=localhost,1433;Database=JobFlow;User Id=sa;Password=your-password;TrustServerCertificate=True;");
 
 builder.Services.AddTransient<PrintJob>();
+```
+
+Configure the global retry policy when needed. `MaxAttempts` includes the first
+execution, so a value of three permits at most three total executions:
+
+```csharp
+builder.Services.UseSqlServerJobStore(
+    connectionString,
+    configureRetryOptions: retry =>
+    {
+        retry.MaxAttempts = 3;
+        retry.BaseDelay = TimeSpan.FromSeconds(2);
+        retry.MaxDelay = TimeSpan.FromMinutes(5);
+    });
 ```
 
 Apply the JobFlow SQL migrations before starting workers:

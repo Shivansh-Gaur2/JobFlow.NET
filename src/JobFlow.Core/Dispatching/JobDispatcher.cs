@@ -12,12 +12,16 @@ public sealed class JobDispatcher : BackgroundService
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(1);
     private readonly JobLeaseOptions _leaseOptions;
     private readonly IJobFailureClassifier _jobFailureClassifier;
+    private readonly IJobRetryPolicy _jobRetryPolicy;
+    private readonly TimeProvider _timeProvider;
     private readonly ILogger<JobDispatcher> _logger;
 
     public JobDispatcher(
         IServiceScopeFactory scopeFactory,
         IJobStore jobStore,
         IJobFailureClassifier jobFailureClassifier,
+        IJobRetryPolicy jobRetryPolicy,
+        TimeProvider timeProvider,
         ILogger<JobDispatcher> logger,
         JobLeaseOptions? leaseOptions = null)
     {
@@ -28,6 +32,8 @@ public sealed class JobDispatcher : BackgroundService
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _jobFailureClassifier = jobFailureClassifier
             ?? throw new ArgumentNullException(nameof(jobFailureClassifier));
+        _jobRetryPolicy = jobRetryPolicy ?? throw new ArgumentNullException(nameof(jobRetryPolicy));
+        _timeProvider = timeProvider ?? throw new ArgumentNullException(nameof(timeProvider));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -165,8 +171,14 @@ public sealed class JobDispatcher : BackgroundService
         try
         {
             var job = lease.Job;
-            var newRetryCount = job.RetryCount + 1;
+            var attemptNumber = job.RetryCount + 1;
             var failure = _jobFailureClassifier.Classify(exception, Guid.NewGuid());
+            var decision = _jobRetryPolicy.Decide(new JobRetryContext(
+                job.Id,
+                job.JobType,
+                attemptNumber,
+                job.MaxAttempts,
+                failure));
 
             _logger.LogError(
                 exception,
@@ -175,13 +187,13 @@ public sealed class JobDispatcher : BackgroundService
                 lease.Job.Id,
                 _workerId);
 
-            DateTimeOffset? nextRunAt = newRetryCount >= job.MaxRetries
-                ? null
-                : DateTimeOffset.UtcNow.AddSeconds(Math.Pow(2, newRetryCount));
+            var nextRunAt = decision.RetryDelay is { } retryDelay
+                ? _timeProvider.GetUtcNow().Add(retryDelay)
+                : (DateTimeOffset?)null;
             var markedFailed = await _store.MarkFailedAsync(
                 lease,
                 failure,
-                newRetryCount,
+                attemptNumber,
                 nextRunAt,
                 ct);
 

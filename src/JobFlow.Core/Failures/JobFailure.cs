@@ -1,8 +1,18 @@
 namespace JobFlow.Core;
 
+public enum JobFailureDisposition
+{
+    Retryable,
+    NonRetryable
+}
+
 public sealed record JobFailure
 {
-    public JobFailure(Guid errorId, string failureType, string safeMessage)
+    public JobFailure(
+        Guid errorId,
+        string failureType,
+        string safeMessage,
+        JobFailureDisposition disposition = JobFailureDisposition.Retryable)
     {
         if (errorId == Guid.Empty)
         {
@@ -29,6 +39,7 @@ public sealed record JobFailure
         ErrorId = errorId;
         FailureType = failureType;
         SafeMessage = safeMessage;
+        Disposition = disposition;
     }
 
     public Guid ErrorId { get; }
@@ -36,4 +47,6 @@ public sealed record JobFailure
     public string FailureType { get; }
 
     public string SafeMessage { get; }
+
+    public JobFailureDisposition Disposition { get; }
 }
