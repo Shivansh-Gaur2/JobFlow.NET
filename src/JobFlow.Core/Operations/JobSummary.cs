@@ -7,6 +7,6 @@ public sealed record JobSummary(
     DateTimeOffset CreatedAt,
     DateTimeOffset NextRunAt,
     int RetryCount,
-    int MaxRetries,
+    int MaxAttempts,
     string? LastWorkerId,
     DateTimeOffset? LastAttemptAt);

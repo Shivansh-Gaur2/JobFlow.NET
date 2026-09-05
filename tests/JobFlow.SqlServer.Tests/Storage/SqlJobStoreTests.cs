@@ -165,7 +165,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         var markedFailed = await store.MarkFailedAsync(
             lease,
             TestFailure(),
-            newRetryCount: lease.Job.MaxRetries,
+            newRetryCount: lease.Job.MaxAttempts,
             nextRunAt: null,
             CancellationToken.None);
 
@@ -797,7 +797,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         var failed = await store.MarkFailedAsync(
             lease,
             failure,
-            newRetryCount: lease.Job.MaxRetries,
+            newRetryCount: lease.Job.MaxAttempts,
             nextRunAt: null,
             CancellationToken.None);
 

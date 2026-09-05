@@ -8,13 +8,19 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
 {
     private readonly string _connectionString;
     private readonly JobLeaseOptions _leaseOptions;
-    public SqlJobStore(string connectionString, JobLeaseOptions? leaseOptions = null)
+    private readonly JobRetryOptions _retryOptions;
+    public SqlJobStore(
+        string connectionString,
+        JobLeaseOptions? leaseOptions = null,
+        JobRetryOptions? retryOptions = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
 
         _connectionString = connectionString;
         _leaseOptions = leaseOptions ?? new JobLeaseOptions();
         _leaseOptions.Validate();
+        _retryOptions = retryOptions ?? new JobRetryOptions();
+        _retryOptions.Validate();
     }
 
     public async Task<JobDetails?> GetAsync(Guid jobId, CancellationToken ct)
@@ -200,7 +206,7 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
 
         var id = Guid.NewGuid();
 
-        const string sql = "INSERT INTO dbo.Jobs (Id, JobType, Payload, Status, NextRunAt, CreatedAt, RetryCount, MaxRetries) VALUES (@id, @jobType, @payload, @status, @nextRunAt, @createdAt, 0, 3)";
+        const string sql = "INSERT INTO dbo.Jobs (Id, JobType, Payload, Status, NextRunAt, CreatedAt, RetryCount, MaxRetries) VALUES (@id, @jobType, @payload, @status, @nextRunAt, @createdAt, 0, @maxAttempts)";
 
         await using var command = new SqlCommand(sql, connection);
         command.Parameters.AddWithValue("@id", id);
@@ -209,6 +215,7 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
         command.Parameters.AddWithValue("@status", (byte)JobStatus.Pending);
         command.Parameters.AddWithValue("@nextRunAt", nextRunAt);
         command.Parameters.AddWithValue("@createdAt", DateTimeOffset.UtcNow);
+        command.Parameters.AddWithValue("@maxAttempts", _retryOptions.MaxAttempts);
 
         await command.ExecuteNonQueryAsync(ct);
 
@@ -266,7 +273,7 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
             NextRunAt = reader.GetDateTimeOffset(4),
             CreatedAt = reader.GetDateTimeOffset(5),
             RetryCount = reader.GetInt32(6),
-            MaxRetries = reader.GetInt32(7),
+            MaxAttempts = reader.GetInt32(7),
             LockedBy = reader.IsDBNull(8) ? null : reader.GetString(8),
             LockedAt = reader.IsDBNull(9) ? null : reader.GetDateTimeOffset(9)
         };
