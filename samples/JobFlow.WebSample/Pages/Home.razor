@@ -1,0 +1,49 @@
+@page "/"
+@rendermode InteractiveServer
+@using JobFlow.Core
+@using JobFlow.Blazor.Components
+@using JobFlow.WebSample
+@inject JobScheduler Scheduler
+@inject IJobQuery Query
+@implements IAsyncDisposable
+
+<h1>JobFlow workroom</h1>
+<p>Start a real background job and watch its stored state as a worker picks it up.</p>
+<button @onclick="StartAsync" disabled="@(_job is not null && _job.Status == JobStatus.InProgress)">Start a job</button>
+
+@if (_job is not null)
+{
+    <JobDetailsView Job="_job" />
+}
+
+@code {
+    private JobDetails? _job;
+    private CancellationTokenSource? _refresh;
+
+    private async Task StartAsync()
+    {
+        var jobId = await Scheduler.EnqueueAsync<DemoWorkJob>("web-sample");
+        _job = await Query.GetAsync(jobId, CancellationToken.None);
+        _refresh?.Cancel();
+        _refresh = new CancellationTokenSource();
+        _ = RefreshAsync(jobId, _refresh.Token);
+    }
+
+    private async Task RefreshAsync(Guid jobId, CancellationToken ct)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+        while (await timer.WaitForNextTickAsync(ct))
+        {
+            _job = await Query.GetAsync(jobId, ct);
+            await InvokeAsync(StateHasChanged);
+            if (_job?.Status is JobStatus.Completed or JobStatus.Failed) return;
+        }
+    }
+
+    public ValueTask DisposeAsync()
+    {
+        _refresh?.Cancel();
+        _refresh?.Dispose();
+        return ValueTask.CompletedTask;
+    }
+}
