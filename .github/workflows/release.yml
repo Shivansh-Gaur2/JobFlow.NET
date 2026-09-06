@@ -117,8 +117,8 @@ jobs:
           test -n "$NUGET_API_KEY"
           packages=(JobFlow.NET.Core JobFlow.NET.SqlServer JobFlow.NET.AspNetCore JobFlow.NET.Blazor)
           for package in "${packages[@]}"; do
+            # dotnet nuget push uploads the matching .snupkg automatically.
             dotnet nuget push "artifacts/packages/$package.$VERSION.nupkg" --api-key "$NUGET_API_KEY" --source "$NUGET_SOURCE" ${{ inputs.resume_partial_release && '--skip-duplicate' || '' }}
-            dotnet nuget push "artifacts/packages/$package.$VERSION.snupkg" --api-key "$NUGET_API_KEY" --source "$NUGET_SOURCE" ${{ inputs.resume_partial_release && '--skip-duplicate' || '' }}
           done
 
       - name: Verify published packages
