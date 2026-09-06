@@ -1,0 +1,27 @@
+@using JobFlow.Core
+
+@if (Jobs.Count == 0)
+{
+    <p class="jobflow-empty">No jobs match the current filters.</p>
+}
+else
+{
+    <div class="jobflow-list" role="list">
+        @foreach (var job in Jobs)
+        {
+            <a role="listitem" href="@DetailUrl(job.Id)" class="jobflow-list__item">
+                <span class="jobflow-list__status">@job.Status</span>
+                <span><strong>@job.JobType</strong><small>@job.Id</small></span>
+                <span>@job.RetryCount retries</span>
+                <time datetime="@job.CreatedAt.ToString("O")">@job.CreatedAt.LocalDateTime.ToString("g")</time>
+            </a>
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<JobSummary> Jobs { get; set; } = Array.Empty<JobSummary>();
+    [Parameter] public string DetailRoutePrefix { get; set; } = "/jobflow/jobs";
+
+    private string DetailUrl(Guid jobId) => $"{DetailRoutePrefix.TrimEnd('/')}/{jobId}";
+}
