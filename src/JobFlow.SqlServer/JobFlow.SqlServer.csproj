@@ -9,6 +9,7 @@
     <EmbeddedResource Include="Schema\Migrations\002-add-job-attempt-failure-diagnostics.sql" LogicalName="JobFlow.SqlServer.Schema.Migrations.002-add-job-attempt-failure-diagnostics.sql" />
     <EmbeddedResource Include="Schema\Migrations\003-add-job-lease-recovery-index.sql" LogicalName="JobFlow.SqlServer.Schema.Migrations.003-add-job-lease-recovery-index.sql" />
     <EmbeddedResource Include="Schema\Migrations\004-add-operations-query-indexes.sql" LogicalName="JobFlow.SqlServer.Schema.Migrations.004-add-operations-query-indexes.sql" />
+    <EmbeddedResource Include="Schema\Migrations\005-add-job-update-outbox.sql" LogicalName="JobFlow.SqlServer.Schema.Migrations.005-add-job-update-outbox.sql" />
   </ItemGroup>
 
   <ItemGroup>

@@ -469,7 +469,7 @@ public sealed class SqlJobStoreTests : IAsyncLifetime
         Assert.True(await SqlServerTestDatabase.HasIndexAsync(connectionString, "dbo.Jobs", "IX_Jobs_Status_CreatedAt_Id"));
         Assert.True(await SqlServerTestDatabase.HasIndexAsync(connectionString, "dbo.Jobs", "IX_Jobs_JobType_CreatedAt_Id"));
         Assert.True(await SqlServerTestDatabase.HasIndexAsync(connectionString, "dbo.JobAttempts", "IX_JobAttempts_WorkerId_JobId"));
-        Assert.Equal([1, 2, 3, 4], await SqlServerTestDatabase.GetAppliedMigrationVersionsAsync(connectionString));
+        Assert.Equal([1, 2, 3, 4, 5], await SqlServerTestDatabase.GetAppliedMigrationVersionsAsync(connectionString));
     }
 
     [Fact]

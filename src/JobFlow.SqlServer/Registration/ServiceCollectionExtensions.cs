@@ -29,6 +29,7 @@ public static class ServiceCollectionExtensions
         services.AddSingleton(_ => new SqlJobStore(connectionString, leaseOptions, retryOptions));
         services.AddSingleton<IJobStore>(serviceProvider => serviceProvider.GetRequiredService<SqlJobStore>());
         services.AddSingleton<IJobQuery>(serviceProvider => serviceProvider.GetRequiredService<SqlJobStore>());
+        services.AddSingleton<IJobUpdateOutbox>(serviceProvider => serviceProvider.GetRequiredService<SqlJobStore>());
         services.TryAddSingleton<IJobFailureClassifier, DefaultJobFailureClassifier>();
         services.TryAddSingleton<IJobRetryPolicy, ExponentialBackoffRetryPolicy>();
         services.TryAddSingleton(TimeProvider.System);

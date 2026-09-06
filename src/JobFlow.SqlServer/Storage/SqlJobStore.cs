@@ -4,7 +4,7 @@ using System.Data;
 
 namespace JobFlow.SqlServer;
 
-public sealed class SqlJobStore : IJobStore, IJobQuery
+public sealed class SqlJobStore : IJobStore, IJobQuery, IJobUpdateOutbox
 {
     private readonly string _connectionString;
     private readonly JobLeaseOptions _leaseOptions;
@@ -98,6 +98,38 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
         return details is null
             ? null
             : details with { Attempts = attempts.AsReadOnly() };
+    }
+
+    public async Task<IReadOnlyList<JobUpdate>> GetUnpublishedAsync(int take, CancellationToken ct)
+    {
+        if (take is < 1 or > 1000)
+        {
+            throw new ArgumentOutOfRangeException(nameof(take));
+        }
+
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(ct);
+        const string sql = "SELECT TOP (@take) Id, JobId, OccurredAt FROM dbo.JobUpdates WHERE PublishedAt IS NULL ORDER BY OccurredAt, Id";
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.Add("@take", SqlDbType.Int).Value = take;
+        await using var reader = await command.ExecuteReaderAsync(ct);
+        var updates = new List<JobUpdate>();
+        while (await reader.ReadAsync(ct))
+        {
+            updates.Add(new JobUpdate(reader.GetGuid(0), reader.GetGuid(1), reader.GetDateTimeOffset(2)));
+        }
+
+        return updates.AsReadOnly();
+    }
+
+    public async Task MarkPublishedAsync(Guid updateId, CancellationToken ct)
+    {
+        await using var connection = new SqlConnection(_connectionString);
+        await connection.OpenAsync(ct);
+        const string sql = "UPDATE dbo.JobUpdates SET PublishedAt = SYSDATETIMEOFFSET() WHERE Id = @id AND PublishedAt IS NULL";
+        await using var command = new SqlCommand(sql, connection);
+        command.Parameters.AddWithValue("@id", updateId);
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<JobSearchPage> SearchAsync(JobSearchCriteria criteria, CancellationToken ct)
@@ -203,12 +235,13 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
     {
         await using var connection = new SqlConnection(_connectionString);
         await connection.OpenAsync(ct);
+        await using var transaction = (SqlTransaction)await connection.BeginTransactionAsync(ct);
 
         var id = Guid.NewGuid();
 
         const string sql = "INSERT INTO dbo.Jobs (Id, JobType, Payload, Status, NextRunAt, CreatedAt, RetryCount, MaxRetries) VALUES (@id, @jobType, @payload, @status, @nextRunAt, @createdAt, 0, @maxAttempts)";
 
-        await using var command = new SqlCommand(sql, connection);
+        await using var command = new SqlCommand(sql, connection, transaction);
         command.Parameters.AddWithValue("@id", id);
         command.Parameters.AddWithValue("@jobType", jobType);
         command.Parameters.AddWithValue("@payload", (object?)payload ?? DBNull.Value);
@@ -218,6 +251,8 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
         command.Parameters.AddWithValue("@maxAttempts", _retryOptions.MaxAttempts);
 
         await command.ExecuteNonQueryAsync(ct);
+        await AddJobUpdateAsync(connection, transaction, id, ct);
+        await transaction.CommitAsync(ct);
 
         return id;
     }
@@ -329,6 +364,7 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
         attemptCommand.Parameters.AddWithValue("@status", "Running");
 
         await attemptCommand.ExecuteNonQueryAsync(ct);
+        await AddJobUpdateAsync(connection, transaction, job.Id, ct);
         await transaction.CommitAsync(ct);
 
         return new JobLease(job, leaseToken, leaseExpiresAt);
@@ -378,6 +414,7 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
             throw new InvalidOperationException("The claimed job was completed, but its running attempt was not found");
         }
 
+        await AddJobUpdateAsync(connection, transaction, lease.Job.Id, ct);
         await transaction.CommitAsync(ct);
 
         return true;
@@ -445,6 +482,7 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
             throw new InvalidOperationException("The claimed job was failed, but its running attempt was not found");
         }
 
+        await AddJobUpdateAsync(connection, transaction, lease.Job.Id, ct);
         await transaction.CommitAsync(ct);
 
         return true;
@@ -489,6 +527,19 @@ public sealed class SqlJobStore : IJobStore, IJobQuery
         return Enum.IsDefined(status)
             ? status
             : throw new InvalidOperationException($"The database contains an unsupported job status value: {value}.");
+    }
+
+    private static async Task AddJobUpdateAsync(
+        SqlConnection connection,
+        SqlTransaction transaction,
+        Guid jobId,
+        CancellationToken ct)
+    {
+        const string sql = "INSERT INTO dbo.JobUpdates (Id, JobId, OccurredAt) VALUES (@id, @jobId, SYSDATETIMEOFFSET())";
+        await using var command = new SqlCommand(sql, connection, transaction);
+        command.Parameters.AddWithValue("@id", Guid.NewGuid());
+        command.Parameters.AddWithValue("@jobId", jobId);
+        await command.ExecuteNonQueryAsync(ct);
     }
 
     private static JobAttemptStatus ReadAttemptStatus(string value)

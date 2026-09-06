@@ -1,0 +1,46 @@
+@using JobFlow.Core
+
+<section class="jobflow-scene @SceneClass" aria-live="polite" aria-label="@Scene.Message">
+    <div class="jobflow-scene__floor"></div>
+    <div class="jobflow-scene__intake">@IntakeLabel</div>
+    <div class="jobflow-scene__desk">WORK DESK</div>
+    <div class="jobflow-scene__result">@ResultLabel</div>
+    <div class="jobflow-person jobflow-person--one" aria-hidden="true"><span></span></div>
+    <div class="jobflow-person jobflow-person--two" aria-hidden="true"><span></span></div>
+    <div class="jobflow-scene__copy">
+        <p class="jobflow-scene__eyebrow">@Eyebrow</p>
+        <h2>@Title</h2>
+        <p>@Scene.Message</p>
+    </div>
+</section>
+
+@code {
+    [Parameter, EditorRequired] public JobScene Scene { get; set; } = default!;
+
+    private string SceneClass => $"jobflow-scene--{Scene.State.ToString().ToLowerInvariant()}";
+    private string IntakeLabel => Scene.State == JobSceneState.Recovering ? "RECOVERY" : "INCOMING JOB";
+    private string ResultLabel => Scene.State switch
+    {
+        JobSceneState.Delivered => "DELIVERED",
+        JobSceneState.Unfinished => "UNFINISHED",
+        JobSceneState.UnderInvestigation => "CHECKING",
+        _ => "RESULTS"
+    };
+    private string Eyebrow => Scene.State switch
+    {
+        JobSceneState.BeingWorked => "WORK IN PROGRESS",
+        JobSceneState.Delivered => "WORK COMPLETE",
+        JobSceneState.Unfinished => "NEEDS ATTENTION",
+        JobSceneState.Recovering => "RECOVERY IN PROGRESS",
+        _ => "JOB ACTIVITY"
+    };
+    private string Title => Scene.State switch
+    {
+        JobSceneState.WaitingAtIntake => "Waiting for a worker",
+        JobSceneState.BeingWorked => "A worker is on it",
+        JobSceneState.Recovering => "Preparing another attempt",
+        JobSceneState.Delivered => "Work delivered",
+        JobSceneState.Unfinished => "Work unfinished",
+        _ => "Checking the job state"
+    };
+}

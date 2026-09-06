@@ -51,7 +51,7 @@ public sealed class SqlServerTestDatabase : IAsyncLifetime
             await using var connection = new SqlConnection(ConnectionString);
             await connection.OpenAsync();
 
-            await using var command = new SqlCommand("DELETE FROM dbo.JobAttempts; DELETE FROM dbo.Jobs;", connection);
+            await using var command = new SqlCommand("DELETE FROM dbo.JobUpdates; DELETE FROM dbo.JobAttempts; DELETE FROM dbo.Jobs;", connection);
             await command.ExecuteNonQueryAsync();
         }
         catch
