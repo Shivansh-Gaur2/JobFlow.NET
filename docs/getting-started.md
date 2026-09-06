@@ -7,10 +7,10 @@ This guide creates one worker process that stores jobs in SQL Server and execute
 Once the preview package is published, add the SQL Server package to your application:
 
 ```powershell
-dotnet add package JobFlow.SqlServer --prerelease
+dotnet add package JobFlow.NET.SqlServer --prerelease
 ```
 
-`JobFlow.SqlServer` brings in `JobFlow.Core`, so you do not need to install both packages manually.
+`JobFlow.NET.SqlServer` brings in `JobFlow.NET.Core`, so you do not need to install both packages manually.
 
 ## 2. Create a job
 

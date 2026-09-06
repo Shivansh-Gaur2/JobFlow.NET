@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-preview.1 - 2026-09-06
+
 - SQL-backed immediate and delayed jobs with renewable leases.
 - Global configurable retries with exponential backoff and jitter.
 - Query API, execution attempt history, and safe failure diagnostics.

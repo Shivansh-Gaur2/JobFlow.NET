@@ -1,0 +1,128 @@
+name: Release JobFlow.NET packages
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact package version declared in Directory.Build.props
+        required: true
+        type: string
+      resume_partial_release:
+        description: Continue a confirmed partial package upload
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Publish packages and create release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: nuget
+    env:
+      VERSION: ${{ inputs.version }}
+      NUGET_SOURCE: https://api.nuget.org/v3/index.json
+      NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+
+    steps:
+      - name: Check out main
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Validate release version and changelog
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$VERSION"
+          projects=(
+            src/JobFlow.Core/JobFlow.Core.csproj
+            src/JobFlow.SqlServer/JobFlow.SqlServer.csproj
+            src/JobFlow.AspNetCore/JobFlow.AspNetCore.csproj
+            src/JobFlow.Blazor/JobFlow.Blazor.csproj
+          )
+          for project in "${projects[@]}"; do
+            expected_version="$(dotnet msbuild "$project" -nologo -getProperty:PackageVersion | tail -n 1)"
+            test "$expected_version" = "$VERSION"
+          done
+          test -n "$(awk -v version="$VERSION" '$0 ~ "^## " version "([[:space:]]|$)" { found=1; next } found && /^## / { exit } found { print }' CHANGELOG.md)"
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "Tag v$VERSION already exists."
+            exit 1
+          fi
+
+      - name: Restore dependencies
+        run: dotnet restore JobFlow.sln
+
+      - name: Build
+        run: dotnet build JobFlow.sln --configuration Release --no-restore
+
+      - name: Test
+        run: dotnet test JobFlow.sln --configuration Release --no-build --verbosity normal
+
+      - name: Pack libraries
+        run: |
+          dotnet pack src/JobFlow.Core/JobFlow.Core.csproj --configuration Release --no-build --output artifacts/packages
+          dotnet pack src/JobFlow.SqlServer/JobFlow.SqlServer.csproj --configuration Release --no-build --output artifacts/packages
+          dotnet pack src/JobFlow.AspNetCore/JobFlow.AspNetCore.csproj --configuration Release --no-build --output artifacts/packages
+          dotnet pack src/JobFlow.Blazor/JobFlow.Blazor.csproj --configuration Release --no-build --output artifacts/packages
+
+      - name: Check NuGet.org availability
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_ids=(jobflow.net.core jobflow.net.sqlserver jobflow.net.aspnetcore jobflow.net.blazor)
+          existing=0
+          for package_id in "${package_ids[@]}"; do
+            package_url="https://api.nuget.org/v3-flatcontainer/$package_id/$VERSION/$package_id.$VERSION.nupkg"
+            status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$package_url")"
+            if [ "$status" = "200" ]; then
+              echo "$package_id $VERSION already exists on NuGet.org."
+              existing=1
+            elif [ "$status" != "404" ]; then
+              echo "Could not check $package_id $VERSION. NuGet.org returned HTTP $status."
+              exit 1
+            fi
+          done
+          if [ "$existing" = "1" ] && [ "${{ inputs.resume_partial_release }}" != "true" ]; then
+            echo "Refusing to publish because one or more package versions already exist."
+            exit 1
+          fi
+
+      - name: Publish packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$NUGET_API_KEY"
+          packages=(JobFlow.NET.Core JobFlow.NET.SqlServer JobFlow.NET.AspNetCore JobFlow.NET.Blazor)
+          for package in "${packages[@]}"; do
+            dotnet nuget push "artifacts/packages/$package.$VERSION.nupkg" --api-key "$NUGET_API_KEY" --source "$NUGET_SOURCE" ${{ inputs.resume_partial_release && '--skip-duplicate' || '' }}
+            dotnet nuget push "artifacts/packages/$package.$VERSION.snupkg" --api-key "$NUGET_API_KEY" --source "$NUGET_SOURCE" ${{ inputs.resume_partial_release && '--skip-duplicate' || '' }}
+          done
+
+      - name: Create tag and GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          awk -v version="$VERSION" '$0 ~ "^## " version "([[:space:]]|$)" { found=1; next } found && /^## / { exit } found { print }' CHANGELOG.md > release-notes.md
+          test -s release-notes.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag --annotate "v$VERSION" --message "JobFlow.NET $VERSION"
+          git push origin "v$VERSION"
+          gh release create "v$VERSION" --title "JobFlow.NET $VERSION" --notes-file release-notes.md

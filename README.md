@@ -39,10 +39,10 @@ flowchart LR
 
 | Project | Purpose | Target |
 | --- | --- | --- |
-| `JobFlow.Core` | Scheduling, execution, retries, and query contracts | .NET 8 |
-| `JobFlow.SqlServer` | SQL storage, migrations, leases, and update outbox | .NET 8 |
-| `JobFlow.AspNetCore` | Authorized query endpoints and SignalR notifications | .NET 8 |
-| `JobFlow.Blazor` | Job list, attempt history, and animated work scene | .NET 8 |
+| `JobFlow.NET.Core` | Scheduling, execution, retries, and query contracts | .NET 8 |
+| `JobFlow.NET.SqlServer` | SQL storage, migrations, leases, and update outbox | .NET 8 |
+| `JobFlow.NET.AspNetCore` | Authorized query endpoints and SignalR notifications | .NET 8 |
+| `JobFlow.NET.Blazor` | Job list, attempt history, and animated work scene | .NET 8 |
 
 Build from source or use the [local NuGet feed instructions](docs/packaging.md).
 The repository's package version is a preview; a successful local pack does
@@ -150,6 +150,7 @@ For the details behind the quick start, read the [documentation index](https://g
 - [Configuration](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/configuration.md)
 - [Operations and diagnostics](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/operations-and-diagnostics.md)
 - [Troubleshooting](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/troubleshooting.md)
+- [Releasing](https://github.com/Shivansh-Gaur2/JobFlow.NET/blob/main/docs/releasing.md)
 
 ## Repository layout
 
