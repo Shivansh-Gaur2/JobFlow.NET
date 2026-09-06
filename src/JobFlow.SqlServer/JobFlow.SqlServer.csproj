@@ -24,10 +24,10 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PackageId>JobFlow.SqlServer</PackageId>
+    <PackageId>JobFlow.NET.SqlServer</PackageId>
     <Title>JobFlow.NET SQL Server</Title>
     <Description>SQL Server storage provider for JobFlow.NET background jobs.</Description>
-    <PackageTags>jobs scheduler background-jobs sql-server hosted-service dotnet</PackageTags>
+    <PackageTags>jobflow background-jobs job-scheduler sql-server hosted-service dotnet</PackageTags>
   </PropertyGroup>
 
 </Project>

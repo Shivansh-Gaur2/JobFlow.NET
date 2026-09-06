@@ -3,9 +3,10 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PackageId>JobFlow.Blazor</PackageId>
+    <PackageId>JobFlow.NET.Blazor</PackageId>
     <Title>JobFlow.NET Blazor</Title>
     <Description>Reusable interactive job status components for JobFlow.NET.</Description>
+    <PackageTags>jobflow background-jobs job-scheduler blazor signalr dotnet</PackageTags>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.AspNetCore.App" />

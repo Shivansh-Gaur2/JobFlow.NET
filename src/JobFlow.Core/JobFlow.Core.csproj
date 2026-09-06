@@ -4,10 +4,10 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PackageId>JobFlow.Core</PackageId>
+    <PackageId>JobFlow.NET.Core</PackageId>
     <Title>JobFlow.NET Core</Title>
     <Description>Core contracts and hosted dispatcher for JobFlow.NET background jobs.</Description>
-    <PackageTags>jobs scheduler background-jobs hosted-service dotnet</PackageTags>
+    <PackageTags>jobflow background-jobs job-scheduler hosted-service dotnet</PackageTags>
   </PropertyGroup>
 
   <ItemGroup>

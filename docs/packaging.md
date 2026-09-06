@@ -22,7 +22,7 @@ tests. CI runs restore, build, tests, and pack; it does not publish packages.
 From a separate consumer project, install the exact version produced locally:
 
 ```powershell
-dotnet add package JobFlow.SqlServer --version 0.1.0-preview.1 --source C:\path\to\JobFlow.NET\artifacts\packages
+dotnet add package JobFlow.NET.SqlServer --version 0.1.0-preview.1 --source C:\path\to\JobFlow.NET\artifacts\packages
 ```
 
 Use your actual feed path and package version. Restore the consumer with both
@@ -39,4 +39,5 @@ the local feed and NuGet.org configured, because dependencies come from NuGet.or
 
 Publishing is a separate maintainer action. Keep API keys in a secret store;
 never put them in source, shell examples, or a committed NuGet configuration.
-No public package availability is implied by these local-feed instructions.
+No public package availability is implied by these local-feed instructions. See
+the [release guide](releasing.md) for the protected publishing workflow.
