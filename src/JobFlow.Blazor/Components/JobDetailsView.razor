@@ -1,0 +1,47 @@
+@using JobFlow.Core
+
+<article class="jobflow-details">
+    <JobWorkScene Scene="JobSceneMapper.Map(Job)" />
+
+    <section class="jobflow-details__summary" aria-label="Job summary">
+        <dl>
+            <div><dt>Job</dt><dd><code>@Job.Id</code></dd></div>
+            <div><dt>Type</dt><dd>@Job.JobType</dd></div>
+            <div><dt>Status</dt><dd>@Job.Status</dd></div>
+            <div><dt>Created</dt><dd>@Job.CreatedAt.LocalDateTime.ToString("g")</dd></div>
+            <div><dt>Attempts</dt><dd>@Job.Attempts.Count of @Job.MaxAttempts</dd></div>
+        </dl>
+    </section>
+
+    <section class="jobflow-details__timeline" aria-label="Attempt history">
+        <h2>Attempt history</h2>
+        @if (Job.Attempts.Count == 0)
+        {
+            <p>No worker has claimed this job yet.</p>
+        }
+        else
+        {
+            <ol>
+                @foreach (var attempt in Job.Attempts)
+                {
+                    <li>
+                        <strong>Attempt @attempt.AttemptNumber: @attempt.Status</strong>
+                        <span>Worker @attempt.WorkerId, started @attempt.StartedAt.LocalDateTime.ToString("g")</span>
+                        @if (attempt.FinishedAt is { } finishedAt)
+                        {
+                            <span>Finished @finishedAt.LocalDateTime.ToString("g")</span>
+                        }
+                        @if (!string.IsNullOrWhiteSpace(attempt.FailureMessage))
+                        {
+                            <span>@attempt.FailureMessage</span>
+                        }
+                    </li>
+                }
+            </ol>
+        }
+    </section>
+</article>
+
+@code {
+    [Parameter, EditorRequired] public JobDetails Job { get; set; } = default!;
+}

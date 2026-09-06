@@ -39,4 +39,8 @@ jobs:
         run: dotnet test JobFlow.sln --configuration Release --no-build --verbosity normal
 
       - name: Pack
-        run: dotnet pack JobFlow.sln --configuration Release --no-build --output ./artifacts/packages
+        run: |
+          dotnet pack src/JobFlow.Core/JobFlow.Core.csproj --configuration Release --no-build --output ./artifacts/packages
+          dotnet pack src/JobFlow.SqlServer/JobFlow.SqlServer.csproj --configuration Release --no-build --output ./artifacts/packages
+          dotnet pack src/JobFlow.AspNetCore/JobFlow.AspNetCore.csproj --configuration Release --no-build --output ./artifacts/packages
+          dotnet pack src/JobFlow.Blazor/JobFlow.Blazor.csproj --configuration Release --no-build --output ./artifacts/packages
