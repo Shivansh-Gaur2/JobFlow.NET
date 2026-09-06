@@ -4,7 +4,8 @@ using JobFlow.WebSample;
 
 var builder = WebApplication.CreateBuilder(args);
 var connectionString = builder.Configuration.GetConnectionString("JobFlow")
-    ?? "Server=localhost,1433;Database=JobFlowWebSample;User Id=sa;Password=YourStrong@Passw0rd;TrustServerCertificate=True;";
+    ?? throw new InvalidOperationException(
+        "Connection string 'JobFlow' is required. Set ConnectionStrings__JobFlow before starting the sample.");
 
 builder.Services.UseSqlServerJobStore(connectionString);
 builder.Services.AddTransient<DemoWorkJob>();
@@ -12,5 +13,6 @@ builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 
 var app = builder.Build();
 await app.Services.ApplyJobFlowSqlServerMigrationsAsync();
+app.MapStaticAssets();
 app.MapRazorComponents<App>().AddInteractiveServerRenderMode();
 app.Run();

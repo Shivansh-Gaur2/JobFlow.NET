@@ -17,3 +17,6 @@ TestResults/
 # NuGet
 *.nupkg
 *.snupkg
+
+# Local sample configuration can contain database credentials.
+samples/JobFlow.WebSample/appsettings.Development.json

@@ -1,0 +1,5 @@
+{
+  "ConnectionStrings": {
+    "JobFlow": "Server=localhost;Database=JobFlowWebSample;Integrated Security=True;TrustServerCertificate=True;"
+  }
+}

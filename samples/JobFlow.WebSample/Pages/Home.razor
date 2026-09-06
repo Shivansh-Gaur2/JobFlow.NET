@@ -9,7 +9,7 @@
 
 <h1>JobFlow workroom</h1>
 <p>Start a real background job and watch its stored state as a worker picks it up.</p>
-<button @onclick="StartAsync" disabled="@(_job is not null && _job.Status == JobStatus.InProgress)">Start a job</button>
+<button @onclick="StartAsync" disabled="@_starting">Start a job</button>
 
 @if (_job is not null)
 {
@@ -19,31 +19,53 @@
 @code {
     private JobDetails? _job;
     private CancellationTokenSource? _refresh;
+    private bool _starting;
 
     private async Task StartAsync()
     {
-        var jobId = await Scheduler.EnqueueAsync<DemoWorkJob>("web-sample");
-        _job = await Query.GetAsync(jobId, CancellationToken.None);
-        _refresh?.Cancel();
-        _refresh = new CancellationTokenSource();
-        _ = RefreshAsync(jobId, _refresh.Token);
+        _starting = true;
+
+        try
+        {
+            var jobId = await Scheduler.EnqueueAsync<DemoWorkJob>("web-sample");
+            _job = await Query.GetAsync(jobId, CancellationToken.None);
+            StopRefreshing();
+            _refresh = new CancellationTokenSource();
+            _ = RefreshAsync(jobId, _refresh.Token);
+        }
+        finally
+        {
+            _starting = false;
+        }
     }
 
     private async Task RefreshAsync(Guid jobId, CancellationToken ct)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
-        while (await timer.WaitForNextTickAsync(ct))
+        try
         {
-            _job = await Query.GetAsync(jobId, ct);
-            await InvokeAsync(StateHasChanged);
-            if (_job?.Status is JobStatus.Completed or JobStatus.Failed) return;
+            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(500));
+            while (await timer.WaitForNextTickAsync(ct))
+            {
+                _job = await Query.GetAsync(jobId, ct);
+                await InvokeAsync(StateHasChanged);
+                if (_job?.Status is JobStatus.Completed or JobStatus.Failed) return;
+            }
+        }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
         }
     }
 
     public ValueTask DisposeAsync()
     {
+        StopRefreshing();
+        return ValueTask.CompletedTask;
+    }
+
+    private void StopRefreshing()
+    {
         _refresh?.Cancel();
         _refresh?.Dispose();
-        return ValueTask.CompletedTask;
+        _refresh = null;
     }
 }

@@ -35,16 +35,49 @@ flowchart LR
     Store --> Attempts[(dbo.JobAttempts: execution history)]
 ```
 
-## Packages
+## Packages and installation
 
-The first public release will be a pre-release package:
+| Project | Purpose | Target |
+| --- | --- | --- |
+| `JobFlow.Core` | Scheduling, execution, retries, and query contracts | .NET 8 |
+| `JobFlow.SqlServer` | SQL storage, migrations, leases, and update outbox | .NET 8 |
+| `JobFlow.AspNetCore` | Authorized query endpoints and SignalR notifications | .NET 8 |
+| `JobFlow.Blazor` | Job list, attempt history, and animated work scene | .NET 8 |
 
-- `JobFlow.Core` — job contracts, scheduling API, and hosted dispatcher.
-- `JobFlow.SqlServer` — SQL Server store and dependency-injection registration.
+Build from source or use the [local NuGet feed instructions](docs/packaging.md).
+The repository's package version is a preview; a successful local pack does
+not mean that version has been published on NuGet.org.
+
+## Try it locally
 
 ```powershell
-dotnet add package JobFlow.SqlServer --prerelease
+git clone https://github.com/Shivansh-Gaur2/JobFlow.NET.git
+cd JobFlow.NET
+dotnet restore JobFlow.sln
+dotnet build JobFlow.sln --configuration Release --no-restore
 ```
+
+The SQL provider needs an existing SQL Server database. Migrations create
+JobFlow's tables, not the database itself. Follow the [local workroom guide](docs/local-workroom.md)
+to configure a database and start the web sample on `http://localhost:5080`.
+
+The sample submits a five-second background job and reads its stored status
+every half second. It shows the work scene and attempt history. It is an
+unfinished development sample: browser startup and the full interaction still
+need verification. There is no hosted demo linked from this repository.
+
+## What works today
+
+- Immediate and delayed jobs with SQL persistence.
+- Renewable worker leases and recovery after an expired lease.
+- Replaceable global retry policy with backoff and jitter.
+- Job queries, cursor pagination, attempt history, and safe failure details.
+- Authorized HTTP queries and a SignalR notification publisher.
+- Blazor components for displaying supplied job records.
+
+The web sample uses polling and does not connect to the custom SignalR hub.
+The UI does not provide percentage progress, cancellation, or manual retries.
+Read the [UI integration guide](docs/ui-integration.md) before exposing it to users.
 
 ## Quick start
 
@@ -148,11 +181,14 @@ The test suite exercises real SQL Server behavior through Testcontainers. The sa
 
 ## Roadmap
 
-1. Prove competing-consumer behavior with multiple worker instances.
-2. Add recurring jobs using cron expressions.
-3. Add a supported read/query API for operations screens instead of requiring direct SQL queries.
-4. Add release automation and publish a preview package.
-5. Consider additional storage adapters only after the SQL Server behavior is proven.
+1. Verify the complete browser experience and add API/UI regression coverage.
+2. Connect the UI to SignalR with reconnect recovery and polling fallback.
+3. Define outbox retention and validate notifications across multiple web hosts.
+4. Validate packages in a separate consumer before publishing a preview.
+5. Explore recurring jobs and additional storage providers after the SQL path is proven.
+
+See the [release preparation guide](docs/packaging.md) for package checks and
+the [change log](CHANGELOG.md) for the current unreleased scope.
 
 ## Contributing and security
 
