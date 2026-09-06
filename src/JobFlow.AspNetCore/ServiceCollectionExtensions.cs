@@ -11,6 +11,7 @@ public static class ServiceCollectionExtensions
         ArgumentNullException.ThrowIfNull(services);
         services.AddSignalR();
         services.TryAddSingleton<IJobViewerAuthorization, DenyAllJobViewerAuthorization>();
+        services.TryAddSingleton<IJobListAuthorization, DenyAllJobListAuthorization>();
         services.AddHostedService<JobFlowUpdatePublisher>();
         return services;
     }
