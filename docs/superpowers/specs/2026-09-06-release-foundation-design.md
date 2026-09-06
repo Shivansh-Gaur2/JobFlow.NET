@@ -46,8 +46,9 @@ check and refuses to continue unless it matches the package version built from
 the selected `main` commit.
 
 The workflow is manual. Merging to `main` never publishes a package. The job
-uses the protected GitHub environment named `nuget`, where the maintainer
-stores `NUGET_API_KEY`.
+uses the GitHub environment named `nuget` and NuGet Trusted Publishing. GitHub
+OIDC exchanges the job identity for a temporary NuGet key immediately before
+publishing, so the repository does not store a long-lived publishing key.
 
 Before publication, the workflow will:
 

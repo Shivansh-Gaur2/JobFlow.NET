@@ -16,11 +16,15 @@ from the `JobFlow.*` C# namespaces.
 
 ## Configure publishing
 
-Create a GitHub environment named `nuget`. Add protection rules appropriate
-for the maintainers, then add `NUGET_API_KEY` as an environment secret. The key
-must allow pushing each JobFlow.NET package ID. Do not add the key to a local
-NuGet configuration, repository secret file, issue, pull request, or shell
-history.
+NuGet Trusted Publishing links the `nuget` GitHub environment to this release
+workflow. The policy must use the NuGet owner `shivansh`, GitHub owner
+`Shivansh-Gaur2`, repository `JobFlow.NET`, workflow file `release.yml`, and
+the `JobFlow.NET.*` package glob. It must allow pushing new packages and package
+versions.
+
+The workflow uses GitHub OIDC to exchange its identity for a temporary NuGet
+key immediately before publishing. Do not create, store, or commit a long-lived
+NuGet API key for this repository.
 
 ## Publish
 
