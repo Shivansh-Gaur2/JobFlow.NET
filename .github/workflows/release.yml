@@ -113,6 +113,27 @@ jobs:
             dotnet nuget push "artifacts/packages/$package.$VERSION.snupkg" --api-key "$NUGET_API_KEY" --source "$NUGET_SOURCE" ${{ inputs.resume_partial_release && '--skip-duplicate' || '' }}
           done
 
+      - name: Verify published packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          package_ids=(jobflow.net.core jobflow.net.sqlserver jobflow.net.aspnetcore jobflow.net.blazor)
+          for package_id in "${package_ids[@]}"; do
+            package_url="https://api.nuget.org/v3-flatcontainer/$package_id/$VERSION/$package_id.$VERSION.nupkg"
+            status="000"
+            for attempt in {1..6}; do
+              status="$(curl --silent --output /dev/null --write-out '%{http_code}' "$package_url")"
+              if [ "$status" = "200" ]; then
+                break
+              fi
+              sleep 10
+            done
+            if [ "$status" != "200" ]; then
+              echo "$package_id $VERSION was not available after publishing. NuGet.org returned HTTP $status."
+              exit 1
+            fi
+          done
+
       - name: Create tag and GitHub Release
         shell: bash
         env:
